@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="app-shell">
+    <aside class="sidebar panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Companion V1</p>
+                <h1>Characters</h1>
+            </div>
+            <button
+                class="ghost-button"
+                hx-get="/characters/new-form"
+                hx-target="#drawer-panel"
+                hx-swap="innerHTML"
+            >
+                New
+            </button>
+        </div>
+
+        <nav class="character-list">
+            {% for character in characters %}
+            <a
+                class="character-card {% if character.id == active_character.id %}active{% endif %}"
+                href="/?character_id={{ character.id }}"
+            >
+                <div class="character-avatar">{{ character.display_name[:1] }}</div>
+                <div>
+                    <div class="character-name">{{ character.display_name }}</div>
+                    <div class="character-subtitle">{{ character.persona_summary }}</div>
+                </div>
+            </a>
+            {% endfor %}
+        </nav>
+    </aside>
+
+    <main class="chat-column panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Active Companion</p>
+                <h2>{{ active_character.display_name }}</h2>
+            </div>
+            <div class="header-pill">General model first · Hires fix default</div>
+        </div>
+
+        {% if status_message %}
+        <div class="banner success">{{ status_message }}</div>
+        {% endif %}
+        {% if error_message %}
+        <div class="banner error">{{ error_message }}</div>
+        {% endif %}
+
+        <section id="messages" class="messages">
+            {% include "partials/message_list.html" %}
+        </section>
+
+        <form
+            class="composer"
+            hx-post="/chat/{{ active_character.id }}"
+            hx-target="#messages"
+            hx-swap="innerHTML"
+            hx-indicator="#chat-indicator"
+        >
+            <label class="sr-only" for="message">Message</label>
+            <textarea
+                id="message"
+                name="message"
+                rows="3"
+                placeholder="Say something that moves the relationship or the scene forward..."
+                required
+            ></textarea>
+            <div class="composer-footer">
+                <div id="chat-indicator" class="indicator">Generating reply...</div>
+                <button class="primary-button" type="submit">Send</button>
+            </div>
+        </form>
+    </main>
+
+    <aside class="detail-column">
+        <section id="right-panel" class="panel detail-panel">
+            {% include "partials/right_panel.html" %}
+        </section>
+        <section id="drawer-panel" class="panel drawer-panel"></section>
+    </aside>
+</div>
+{% endblock %}
+

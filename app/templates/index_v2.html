@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="app-shell">
+    <aside class="sidebar panel">
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Companion V1</p>
+                <h1>Characters</h1>
+            </div>
+            <button
+                class="ghost-button"
+                hx-get="/characters/new-form"
+                hx-target="#modal-panel"
+                hx-swap="innerHTML"
+            >
+                New
+            </button>
+        </div>
+
+        <nav class="character-list">
+            {% for character in characters %}
+            <a
+                class="character-card {% if character.id == active_character.id %}active{% endif %}"
+                href="/?character_id={{ character.id }}"
+            >
+                <div class="character-avatar">{{ character.display_name[:1] }}</div>
+                <div>
+                    <div class="character-name">{{ character.display_name }}</div>
+                    <div class="character-subtitle">{{ character.persona_summary }}</div>
+                </div>
+            </a>
+            {% endfor %}
+        </nav>
+    </aside>
+
+    <main class="chat-column panel">
+        <div class="status-rail">
+            <article id="text-engine-chip" class="engine-chip" data-state="idle">
+                <div class="engine-chip-top">
+                    <span class="engine-label">Text Engine</span>
+                    <span class="engine-state">idle</span>
+                </div>
+                <div class="engine-detail">Waiting for first reply</div>
+                <div class="engine-progress"><span class="engine-progress-fill"></span></div>
+            </article>
+            <article id="image-engine-chip" class="engine-chip" data-state="idle">
+                <div class="engine-chip-top">
+                    <span class="engine-label">Image Engine</span>
+                    <span class="engine-state">idle</span>
+                </div>
+                <div class="engine-detail">Loads on first image request</div>
+                <div class="engine-progress"><span class="engine-progress-fill"></span></div>
+            </article>
+        </div>
+
+        <div class="panel-header">
+            <div>
+                <p class="eyebrow">Active Companion</p>
+                <h2>{{ active_character.display_name }}</h2>
+            </div>
+            <div class="header-pill">Story-first flow - latent hires default</div>
+        </div>
+
+        {% if status_message %}
+        <div class="banner success">{{ status_message }}</div>
+        {% endif %}
+        {% if error_message %}
+        <div class="banner error">{{ error_message }}</div>
+        {% endif %}
+
+        <section id="timeline" class="timeline">
+            {% include "partials/story_timeline.html" %}
+        </section>
+
+        <form
+            class="composer"
+            hx-post="/chat/{{ active_character.id }}"
+            hx-target="#timeline"
+            hx-swap="innerHTML"
+            hx-indicator="#chat-indicator"
+            data-action="chat"
+        >
+            <label class="sr-only" for="message">Message</label>
+            <textarea
+                id="message"
+                name="message"
+                rows="2"
+                placeholder="Say something that moves the relationship or the scene forward..."
+                required
+            ></textarea>
+            <div class="composer-footer">
+                <div id="chat-indicator" class="indicator progress-indicator" aria-live="polite">
+                    <span class="indicator-label">Generating reply...</span>
+                    <span class="indicator-bar"><span></span></span>
+                </div>
+                <button class="primary-button" type="submit">Send</button>
+            </div>
+        </form>
+    </main>
+
+    <aside class="detail-column">
+        <section id="right-panel" class="panel detail-panel">
+            {% include "partials/right_panel_v2.html" %}
+        </section>
+    </aside>
+</div>
+<section id="modal-panel" class="modal-shell"></section>
+{% endblock %}

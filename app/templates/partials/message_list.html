@@ -1,0 +1,17 @@
+{% if error_message %}
+<div class="banner error">{{ error_message }}</div>
+{% endif %}
+
+{% if messages %}
+    {% for message in messages %}
+    <article class="message {% if message.role == 'user' %}user{% elif message.role == 'assistant' %}assistant{% else %}system{% endif %}">
+        <div class="message-meta">{{ message.role }}</div>
+        <div class="message-body">{{ message.content }}</div>
+    </article>
+    {% endfor %}
+{% else %}
+    <div class="empty-state">
+        <p>No conversation yet. Start the first scene.</p>
+    </div>
+{% endif %}
+

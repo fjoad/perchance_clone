@@ -1,0 +1,2 @@
+"""Companion app package."""
+

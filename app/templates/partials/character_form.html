@@ -1,0 +1,79 @@
+<div class="modal-backdrop" onclick="window.closeModal(event)">
+    <div class="modal-card" onclick="event.stopPropagation()">
+        <div class="drawer-header">
+            <div>
+                <p class="eyebrow">Character Editor</p>
+                <h3>{% if character %}Edit {{ character.display_name }}{% else %}New Character{% endif %}</h3>
+            </div>
+            <button class="ghost-button" type="button" onclick="window.closeModal()">Close</button>
+        </div>
+
+        <form
+            class="stack-form modal-form"
+            hx-post="/characters"
+            hx-target="body"
+            hx-swap="none"
+        >
+            {% if character %}
+            <input type="hidden" name="id" value="{{ character.id }}">
+            {% endif %}
+
+            <label>
+                <span>Display name</span>
+                <input type="text" name="display_name" value="{{ character.display_name if character else '' }}" required>
+            </label>
+
+            <label>
+                <span>Persona summary</span>
+                <textarea name="persona_summary" rows="2">{{ character.persona_summary if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Personality traits</span>
+                <textarea name="personality_traits" rows="2">{{ character.personality_traits if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Speaking style</span>
+                <textarea name="speaking_style" rows="2">{{ character.speaking_style if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Backstory</span>
+                <textarea name="backstory" rows="4">{{ character.backstory if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Relationship frame</span>
+                <textarea name="relationship_frame" rows="2">{{ character.relationship_frame if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Boundaries</span>
+                <textarea name="boundaries" rows="2">{{ character.boundaries if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Appearance</span>
+                <textarea name="appearance" rows="3">{{ character.appearance if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Example dialogue</span>
+                <textarea name="example_dialogue" rows="3">{{ character.example_dialogue if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Default visual style</span>
+                <textarea name="default_visual_style" rows="2">{{ character.default_visual_style if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Pinned memory</span>
+                <textarea name="pinned_memory" rows="3">{{ pinned_memory }}</textarea>
+            </label>
+
+            <button class="primary-button" type="submit">Save Character</button>
+        </form>
+    </div>
+</div>
