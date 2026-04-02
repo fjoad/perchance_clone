@@ -13,7 +13,7 @@
             {% if message.role == 'user' %}
             You
             {% elif message.role == 'assistant' %}
-            Narrator
+            {{ active_character.display_name }}
             {% else %}
             System
             {% endif %}
@@ -107,6 +107,20 @@
             </form>
         </div>
 
+        {% endif %}
+
+        {% if message.role == 'user' %}
+        <div class="message-actions">
+            <form
+                hx-post="/messages/{{ message.id }}/delete"
+                hx-target="#timeline"
+                hx-swap="innerHTML"
+                data-action="delete"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <button class="micro-button danger" type="submit">Delete Block</button>
+            </form>
+        </div>
         {% endif %}
     </article>
 

@@ -100,6 +100,21 @@ a {
     transition: width 220ms ease;
 }
 
+@keyframes enginePulse {
+    0% { opacity: 0.68; }
+    50% { opacity: 1; }
+    100% { opacity: 0.68; }
+}
+
+.engine-chip[data-state="queued"] .engine-progress-fill,
+.engine-chip[data-state="preparing"] .engine-progress-fill,
+.engine-chip[data-state="loading"] .engine-progress-fill,
+.engine-chip[data-state="unloading"] .engine-progress-fill,
+.engine-chip[data-state="generating"] .engine-progress-fill,
+.engine-chip[data-state="running"] .engine-progress-fill {
+    animation: enginePulse 1s ease-in-out infinite;
+}
+
 .panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -573,6 +588,22 @@ select:focus {
     line-height: 1.5;
 }
 
+.expandable-card summary {
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+}
+
+.expandable-card summary::-webkit-details-marker {
+    display: none;
+}
+
+.longform-copy {
+    white-space: pre-wrap;
+    color: var(--muted);
+    line-height: 1.6;
+}
+
 .story-guide p + h4 {
     margin-top: 6px;
 }
@@ -580,6 +611,12 @@ select:focus {
 .stack-form {
     display: grid;
     gap: 12px;
+}
+
+.compact-stack {
+    padding: 0;
+    background: transparent;
+    border: 0;
 }
 
 .stack-form label {
@@ -663,6 +700,69 @@ select:focus {
 
 .modal-form {
     padding-top: 6px;
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.section-header h4 {
+    margin: 4px 0 0;
+}
+
+.lorebook-editor {
+    display: grid;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    background: rgba(20, 27, 40, 0.5);
+}
+
+.lorebook-list {
+    display: grid;
+    gap: 14px;
+}
+
+.lore-entry-card {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: rgba(16, 22, 34, 0.82);
+}
+
+.lorebook-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px;
+    gap: 12px;
+}
+
+.toggle-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+}
+
+.checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+}
+
+.checkbox-row input {
+    width: auto;
+}
+
+.danger-subtle {
+    color: #ffb4bf;
+    border-color: rgba(255, 110, 140, 0.35);
 }
 
 .sr-only {

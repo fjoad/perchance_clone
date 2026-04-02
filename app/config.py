@@ -54,11 +54,14 @@ class Settings:
     hf_hub_cache: Path = HF_HUB_CACHE
     db_path: Path = RUNTIME_DIR / "companion_v1_app.sqlite3"
     text_model_id: str = "Qwen/Qwen2.5-7B-Instruct"
+    llama_comparison_model_id: str = "meta-llama/Meta-Llama-3.1-8B-Instruct"
     roleplay_benchmark_model_id: str = "PygmalionAI/Pygmalion-3-12B"
     use_mock_text: bool = os.getenv("COMPANION_USE_MOCK_TEXT", "0") == "1"
     use_mock_image: bool = os.getenv("COMPANION_USE_MOCK_IMAGE", "0") == "1"
     summary_interval_user_turns: int = 6
     recent_messages_window: int = 12
+    lore_recent_turns: int = 4
+    lore_max_entries: int = 3
     static_dir: Path = STATIC_DIR
     templates_dir: Path = TEMPLATES_DIR
     runtime_dir: Path = RUNTIME_DIR

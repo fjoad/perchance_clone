@@ -83,6 +83,15 @@ class ImageGenerationService:
             return 0
         return int(requested_steps / min(cfg.denoise_strength, 0.999))
 
+    def _compute_effective_second_pass_steps(self, internal_steps: int) -> int:
+        cfg = settings.image
+        if internal_steps <= 0:
+            return 0
+        if cfg.denoise_strength <= 0:
+            return 0
+        effective = int(internal_steps * cfg.denoise_strength)
+        return max(1, min(effective, internal_steps))
+
     def _merged_dimensions(self, override: dict[str, int] | None) -> dict[str, int]:
         if not override:
             return {
@@ -143,7 +152,7 @@ class ImageGenerationService:
             detail = f"{stage_label} {current_step}/{total_steps}"
             eta_text = self._format_eta(eta)
             if eta_text:
-                detail = f"{detail} · ETA {eta_text}"
+                detail = f"{detail} - ETA {eta_text}"
             self._set_status(
                 "running",
                 detail,
@@ -170,7 +179,15 @@ class ImageGenerationService:
                 self._pipe = None
             gc.collect()
             if torch.cuda.is_available():
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
                 torch.cuda.empty_cache()
+                try:
+                    torch.cuda.ipc_collect()
+                except Exception:
+                    pass
             self._set_status("idle", "Image engine idle", 0.0)
 
     def _relative_output_path(self, path: Path) -> str:
@@ -357,6 +374,8 @@ class ImageGenerationService:
         if self._pipe is not None and self._pipe_i2i is not None:
             self._set_status("ready", "Image pipeline ready", 1.0)
             return
+        active_message_id = self._status.get("message_id")
+        active_image_id = self._status.get("image_id")
         if not settings.image.checkpoint.exists():
             raise FileNotFoundError(f"Image checkpoint not found: {settings.image.checkpoint}")
         if not torch.cuda.is_available():
@@ -365,7 +384,14 @@ class ImageGenerationService:
             if self._pipe is not None and self._pipe_i2i is not None:
                 self._set_status("ready", "Image pipeline ready", 1.0)
                 return
-            self._set_status("loading", "Loading image pipeline", 0.15)
+            self._set_status(
+                "loading",
+                "Loading image pipeline",
+                0.15,
+                stage="loading",
+                message_id=active_message_id,
+                image_id=active_image_id,
+            )
             pipe = StableDiffusionXLPipeline.from_single_file(
                 str(settings.image.checkpoint),
                 torch_dtype=torch.float16,
@@ -696,7 +722,8 @@ class ImageGenerationService:
             pe, pooled, ne, npooled = self._prepare_prompt_embeds(self._pipe, positive_prompt, negative_prompt)
             requested_second_pass_steps = cfg.hires_steps or cfg.steps
             second_pass_steps = self._compute_second_pass_steps(requested_second_pass_steps)
-            total_combined_steps = cfg.steps + max(second_pass_steps, 1)
+            effective_second_pass_steps = self._compute_effective_second_pass_steps(second_pass_steps)
+            total_combined_steps = cfg.steps + max(effective_second_pass_steps, 1)
             self._set_status(
                 "running",
                 f"Base pass 0/{cfg.steps}",
@@ -748,11 +775,11 @@ class ImageGenerationService:
             generator_2 = torch.Generator(device="cuda").manual_seed(seed)
             self._set_status(
                 "running",
-                f"Hires pass 0/{second_pass_steps}",
+                f"Hires pass 0/{effective_second_pass_steps}",
                 cfg.steps / max(total_combined_steps, 1),
                 stage="hires_pass",
                 current_step=0,
-                total_steps=second_pass_steps,
+                total_steps=effective_second_pass_steps,
                 message_id=message_id,
                 image_id=image_id,
             )
@@ -770,13 +797,33 @@ class ImageGenerationService:
                 callback_on_step_end=self._make_progress_callback(
                     stage_label="Hires pass",
                     completed_before=cfg.steps,
-                    total_steps=second_pass_steps,
+                    total_steps=effective_second_pass_steps,
                     total_combined_steps=total_combined_steps,
                     message_id=message_id,
                     image_id=image_id,
                 ),
             ).images[0]
+            self._set_status(
+                "finalizing",
+                "Saving image",
+                0.97,
+                stage="saving",
+                current_step=effective_second_pass_steps,
+                total_steps=effective_second_pass_steps,
+                message_id=message_id,
+                image_id=image_id,
+            )
             img_hi.save(final_path)
+            self._set_status(
+                "finalizing",
+                "Finalizing image request",
+                0.99,
+                stage="finalizing",
+                current_step=effective_second_pass_steps,
+                total_steps=effective_second_pass_steps,
+                message_id=message_id,
+                image_id=image_id,
+            )
             self._set_status("ready", "Image pipeline ready", 1.0)
 
             return {
@@ -792,6 +839,7 @@ class ImageGenerationService:
                 "target_height": dims["target_height"],
                 "denoise_strength": cfg.denoise_strength,
                 "second_pass_steps": second_pass_steps,
+                "effective_second_pass_steps": effective_second_pass_steps,
                 "seed": seed,
                 "stage1_output_path": self._relative_output_path(stage1_path),
                 "output_path": self._relative_output_path(final_path),

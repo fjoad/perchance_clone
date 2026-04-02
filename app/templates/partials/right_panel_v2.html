@@ -21,19 +21,57 @@
 {% endif %}
 
 <div class="info-card">
+    <h4>User Profile</h4>
+    <form
+        class="stack-form compact-stack"
+        hx-post="/user-profile"
+        hx-target="#right-panel"
+        hx-swap="innerHTML"
+    >
+        <input type="hidden" name="character_id" value="{{ active_character.id }}">
+        <label>
+            <span>Name</span>
+            <input type="text" name="display_name" value="{{ user_profile.display_name }}">
+        </label>
+        <label>
+            <span>Story background</span>
+            <textarea name="background" rows="6">{{ user_profile.background }}</textarea>
+        </label>
+        <button class="primary-button compact" type="submit">Save Profile</button>
+    </form>
+</div>
+
+<div class="info-card">
     <h4>Persona</h4>
     <p>{{ active_character.persona_summary }}</p>
+    {% if active_character.source_media %}
+    <h4>Source media</h4>
+    <p>{{ active_character.source_media }}</p>
+    {% endif %}
     <h4>Appearance</h4>
     <p>{{ active_character.appearance }}</p>
     <h4>Pinned memory</h4>
     <p>{{ pinned_memory or "No pinned memory yet." }}</p>
+    <h4>Lorebook</h4>
+    <p>{{ lore_entries|length }} {% if lore_entries|length == 1 %}entry{% else %}entries{% endif %} available for retrieval.</p>
+    {% if active_character.image_anchor_summary %}
+    <h4>Image anchor</h4>
+    <p>{{ active_character.image_anchor_summary }}</p>
+    {% endif %}
 </div>
+
+{% if active_character.character_dossier %}
+<details class="info-card expandable-card">
+    <summary>Full Character Dossier</summary>
+    <div class="longform-copy">{{ active_character.character_dossier }}</div>
+</details>
+{% endif %}
 
 <div class="info-card story-guide">
     <h4>Story Flow</h4>
-    <p>Each narrator response is its own scene beat. Generate visuals from the exact beat you want instead of from one global image panel.</p>
+    <p>Each {{ active_character.display_name }} response is its own scene beat. Generate visuals from the exact beat you want instead of from one global image panel.</p>
     <h4>Image preset</h4>
     <p>{{ image_cfg.base_width }} -> {{ image_cfg.target_width }}, latent hires, DPM++ 2M, denoise {{ image_cfg.denoise_strength }}</p>
     <h4>Current controls</h4>
-    <p>Use the action row under each narrator block to generate an image, regenerate the latest reply, or delete a block.</p>
+    <p>Use the action row under each {{ active_character.display_name }} block to generate an image, regenerate the latest reply, or delete a block.</p>
 </div>

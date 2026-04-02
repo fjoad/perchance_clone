@@ -37,6 +37,77 @@ function closeModal(event) {
     }
 }
 
+function addLoreEntryRow(form) {
+    if (!form) {
+        return;
+    }
+    const list = form.querySelector("[data-lorebook-list]");
+    if (!list) {
+        return;
+    }
+    const nextIndex = Number.parseInt(form.dataset.loreNextIndex || "0", 10) || 0;
+    const article = document.createElement("article");
+    article.className = "lore-entry-card";
+    article.dataset.loreEntry = "true";
+    article.innerHTML = `
+        <input type="hidden" name="lore_id_${nextIndex}" value="">
+        <input type="hidden" name="lore_delete_${nextIndex}" value="0" data-lore-delete>
+
+        <label>
+            <span>Title</span>
+            <input type="text" name="lore_title_${nextIndex}" value="">
+        </label>
+
+        <label>
+            <span>Content</span>
+            <textarea name="lore_content_${nextIndex}" rows="3"></textarea>
+        </label>
+
+        <div class="lorebook-grid">
+            <label>
+                <span>Keywords</span>
+                <input type="text" name="lore_keywords_${nextIndex}" value="" placeholder="comma, separated, triggers">
+            </label>
+            <label>
+                <span>Priority</span>
+                <input type="number" name="lore_priority_${nextIndex}" value="0">
+            </label>
+        </div>
+
+        <div class="toggle-row">
+            <label class="checkbox-row">
+                <input type="checkbox" name="lore_enabled_${nextIndex}" value="1" checked>
+                <span>Enabled</span>
+            </label>
+            <label class="checkbox-row">
+                <input type="checkbox" name="lore_always_include_${nextIndex}" value="1">
+                <span>Always include</span>
+            </label>
+            <button class="ghost-button danger-subtle" type="button" onclick="window.removeLoreEntryRow(this)">Delete Entry</button>
+        </div>
+    `;
+    list.appendChild(article);
+    form.dataset.loreNextIndex = String(nextIndex + 1);
+    const firstField = article.querySelector("input[type='text'], textarea");
+    if (firstField) {
+        firstField.focus();
+    }
+}
+
+function removeLoreEntryRow(button) {
+    const card = button ? button.closest("[data-lore-entry]") : null;
+    if (!card) {
+        return;
+    }
+    const deleteField = card.querySelector("[data-lore-delete]");
+    if (deleteField) {
+        deleteField.value = "1";
+        card.hidden = true;
+        return;
+    }
+    card.remove();
+}
+
 function setEngineChip(prefix, snapshot) {
     const chip = document.getElementById(prefix + "-engine-chip");
     if (!chip || !snapshot) {
@@ -56,12 +127,34 @@ function setEngineChip(prefix, snapshot) {
     }
 }
 
+function setEngineChipManual(prefix, state, detail, progress) {
+    const chip = document.getElementById(prefix + "-engine-chip");
+    if (!chip) {
+        return;
+    }
+    chip.dataset.state = state || "idle";
+    const detailNode = chip.querySelector(".engine-detail");
+    const stateNode = chip.querySelector(".engine-state");
+    const bar = chip.querySelector(".engine-progress-fill");
+    if (detailNode) {
+        detailNode.textContent = detail || "";
+    }
+    if (stateNode) {
+        stateNode.textContent = state || "idle";
+    }
+    if (bar) {
+        const safeProgress = Math.max(0, Math.min(1, progress ?? 0));
+        bar.style.width = (safeProgress * 100).toFixed(0) + "%";
+    }
+}
+
 function setMessageProgress(snapshot) {
     document.querySelectorAll(".message-progress").forEach((node) => {
         node.hidden = true;
     });
 
-    if (!snapshot || (snapshot.state !== "running" && snapshot.state !== "preparing" && snapshot.state !== "conditioning")) {
+    const activeStates = new Set(["queued", "preparing", "conditioning", "loading", "running", "finalizing"]);
+    if (!snapshot || !activeStates.has(snapshot.state)) {
         return;
     }
 
@@ -95,6 +188,47 @@ function applyStatusSnapshot(status) {
     setEngineChip("text", status.text);
     setEngineChip("image", status.image);
     setMessageProgress(status.image);
+}
+
+function showPendingProgress(selector, labelText) {
+    const target = document.querySelector(selector);
+    if (!target) {
+        return;
+    }
+    target.hidden = false;
+    const label = target.querySelector(".message-progress-label");
+    const fill = target.querySelector(".message-progress-bar span");
+    if (label) {
+        label.textContent = labelText;
+    }
+    if (fill) {
+        fill.style.width = "12%";
+    }
+}
+
+function setPendingActionState(source) {
+    if (!source || !source.dataset) {
+        return;
+    }
+    const action = source.dataset.action || "";
+    if (action === "chat" || action === "regenerate") {
+        setEngineChipManual("text", "queued", "Reply request received", 0.08);
+        return;
+    }
+    if (action === "image") {
+        setEngineChipManual("text", "queued", "Preparing scene context", 0.08);
+        setEngineChipManual("image", "queued", "Image request received", 0.06);
+        if (source.dataset.messageId) {
+            showPendingProgress(`.message-progress[data-message-id="${source.dataset.messageId}"]`, "Request received...");
+        }
+        return;
+    }
+    if (action === "image-regenerate") {
+        setEngineChipManual("image", "queued", "Image regeneration requested", 0.06);
+        if (source.dataset.imageId) {
+            showPendingProgress(`.message-progress[data-image-id="${source.dataset.imageId}"]`, "Regeneration requested...");
+        }
+    }
 }
 
 function connectStatusStream() {
@@ -148,6 +282,8 @@ function typewriteLatestAssistant() {
 
 window.closeModal = closeModal;
 window.toggleInlineComposer = toggleInlineComposer;
+window.addLoreEntryRow = addLoreEntryRow;
+window.removeLoreEntryRow = removeLoreEntryRow;
 
 document.addEventListener("DOMContentLoaded", () => {
     scrollTimelineToBottom();
@@ -161,6 +297,7 @@ document.body.addEventListener("htmx:beforeRequest", (event) => {
         if (source.dataset.messageId) {
             document.body.dataset.lastMessageId = source.dataset.messageId;
         }
+        setPendingActionState(source);
     }
 });
 

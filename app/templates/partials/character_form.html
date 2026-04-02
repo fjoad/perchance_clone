@@ -13,6 +13,7 @@
             hx-post="/characters"
             hx-target="body"
             hx-swap="none"
+            data-lore-next-index="{{ lore_entries|length if lore_entries else 1 }}"
         >
             {% if character %}
             <input type="hidden" name="id" value="{{ character.id }}">
@@ -26,6 +27,16 @@
             <label>
                 <span>Persona summary</span>
                 <textarea name="persona_summary" rows="2">{{ character.persona_summary if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Full character dossier</span>
+                <textarea name="character_dossier" rows="10">{{ character.character_dossier if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Source media / franchise</span>
+                <input type="text" name="source_media" value="{{ character.source_media if character else '' }}" placeholder="Azur Lane">
             </label>
 
             <label>
@@ -69,9 +80,121 @@
             </label>
 
             <label>
+                <span>Optional reminders</span>
+                <textarea name="special_instructions" rows="3">{{ character.special_instructions if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Image anchor summary</span>
+                <textarea name="image_anchor_summary" rows="2">{{ character.image_anchor_summary if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Image prompt positive additions</span>
+                <textarea name="image_prompt_positive_additions" rows="3">{{ character.image_prompt_positive_additions if character else '' }}</textarea>
+            </label>
+
+            <label>
+                <span>Image prompt negative additions</span>
+                <textarea name="image_prompt_negative_additions" rows="3">{{ character.image_prompt_negative_additions if character else '' }}</textarea>
+            </label>
+
+            <label>
                 <span>Pinned memory</span>
                 <textarea name="pinned_memory" rows="3">{{ pinned_memory }}</textarea>
             </label>
+
+            <section class="lorebook-editor">
+                <div class="section-header">
+                    <div>
+                        <p class="eyebrow">Lorebook</p>
+                        <h4>Retrievable Entries</h4>
+                    </div>
+                    <button class="ghost-button" type="button" onclick="window.addLoreEntryRow(this.form)">Add Entry</button>
+                </div>
+
+                <div class="lorebook-list" data-lorebook-list>
+                    {% if lore_entries %}
+                        {% for lore_entry in lore_entries %}
+                        <article class="lore-entry-card" data-lore-entry>
+                            <input type="hidden" name="lore_id_{{ loop.index0 }}" value="{{ lore_entry.id }}">
+                            <input type="hidden" name="lore_delete_{{ loop.index0 }}" value="0" data-lore-delete>
+
+                            <label>
+                                <span>Title</span>
+                                <input type="text" name="lore_title_{{ loop.index0 }}" value="{{ lore_entry.title }}">
+                            </label>
+
+                            <label>
+                                <span>Content</span>
+                                <textarea name="lore_content_{{ loop.index0 }}" rows="3">{{ lore_entry.content }}</textarea>
+                            </label>
+
+                            <div class="lorebook-grid">
+                                <label>
+                                    <span>Keywords</span>
+                                    <input type="text" name="lore_keywords_{{ loop.index0 }}" value="{{ lore_entry.keywords }}" placeholder="comma, separated, triggers">
+                                </label>
+                                <label>
+                                    <span>Priority</span>
+                                    <input type="number" name="lore_priority_{{ loop.index0 }}" value="{{ lore_entry.priority or 0 }}">
+                                </label>
+                            </div>
+
+                            <div class="toggle-row">
+                                <label class="checkbox-row">
+                                    <input type="checkbox" name="lore_enabled_{{ loop.index0 }}" value="1" {% if lore_entry.enabled %}checked{% endif %}>
+                                    <span>Enabled</span>
+                                </label>
+                                <label class="checkbox-row">
+                                    <input type="checkbox" name="lore_always_include_{{ loop.index0 }}" value="1" {% if lore_entry.always_include %}checked{% endif %}>
+                                    <span>Always include</span>
+                                </label>
+                                <button class="ghost-button danger-subtle" type="button" onclick="window.removeLoreEntryRow(this)">Delete Entry</button>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    {% else %}
+                        <article class="lore-entry-card" data-lore-entry>
+                            <input type="hidden" name="lore_id_0" value="">
+                            <input type="hidden" name="lore_delete_0" value="0" data-lore-delete>
+
+                            <label>
+                                <span>Title</span>
+                                <input type="text" name="lore_title_0" value="">
+                            </label>
+
+                            <label>
+                                <span>Content</span>
+                                <textarea name="lore_content_0" rows="3"></textarea>
+                            </label>
+
+                            <div class="lorebook-grid">
+                                <label>
+                                    <span>Keywords</span>
+                                    <input type="text" name="lore_keywords_0" value="" placeholder="comma, separated, triggers">
+                                </label>
+                                <label>
+                                    <span>Priority</span>
+                                    <input type="number" name="lore_priority_0" value="0">
+                                </label>
+                            </div>
+
+                            <div class="toggle-row">
+                                <label class="checkbox-row">
+                                    <input type="checkbox" name="lore_enabled_0" value="1" checked>
+                                    <span>Enabled</span>
+                                </label>
+                                <label class="checkbox-row">
+                                    <input type="checkbox" name="lore_always_include_0" value="1">
+                                    <span>Always include</span>
+                                </label>
+                                <button class="ghost-button danger-subtle" type="button" onclick="window.removeLoreEntryRow(this)">Delete Entry</button>
+                            </div>
+                        </article>
+                    {% endif %}
+                </div>
+            </section>
 
             <button class="primary-button" type="submit">Save Character</button>
         </form>
