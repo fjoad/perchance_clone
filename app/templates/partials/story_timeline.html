@@ -1,8 +1,11 @@
 {% if error_message %}
 <div class="banner error">{{ error_message }}</div>
 {% endif %}
+{% if status_message %}
+<div class="banner success">{{ status_message }}</div>
+{% endif %}
 
-{% if messages or (latest_image and latest_image.media_url) %}
+{% if messages %}
 <div class="story-feed">
     {% for message in messages %}
     <article class="story-block {% if message.role == 'user' %}user{% elif message.role == 'assistant' %}assistant{% else %}system{% endif %}">
@@ -20,26 +23,144 @@
             data-role="{{ message.role }}"
             data-typewriter="{% if loop.last and message.role == 'assistant' %}pending{% else %}done{% endif %}"
         >{{ message.content }}</div>
-    </article>
-    {% endfor %}
 
-    {% if latest_image and latest_image.media_url %}
-    <article class="story-block assistant visual-block">
+        {% if message.role == 'assistant' %}
+        <div class="message-actions">
+            <button
+                class="micro-button"
+                type="button"
+                onclick="window.toggleInlineComposer('image-tools-{{ message.id }}')"
+            >
+                Generate Image
+            </button>
+
+            {% if message.id == latest_assistant_id %}
+            <form
+                hx-post="/messages/{{ message.id }}/regenerate"
+                hx-target="#timeline"
+                hx-swap="innerHTML"
+                data-action="regenerate"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <button class="micro-button" type="submit">Regenerate</button>
+            </form>
+            {% endif %}
+
+            <form
+                hx-post="/messages/{{ message.id }}/delete"
+                hx-target="#timeline"
+                hx-swap="innerHTML"
+                data-action="delete"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <button class="micro-button danger" type="submit">Delete Block</button>
+            </form>
+        </div>
+
+        <div
+            class="message-progress"
+            id="message-progress-{{ message.id }}"
+            data-message-id="{{ message.id }}"
+            hidden
+        >
+            <div class="message-progress-label">Preparing image...</div>
+            <div class="message-progress-bar"><span></span></div>
+        </div>
+
+        <div class="inline-image-tools" id="image-tools-{{ message.id }}" hidden>
+            <form
+                class="inline-image-form"
+                hx-post="/messages/{{ message.id }}/image"
+                hx-target="#timeline"
+                hx-swap="innerHTML"
+                data-action="image"
+                data-message-id="{{ message.id }}"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <label>
+                    <span>Optional note for this scene beat</span>
+                    <textarea
+                        name="image_note"
+                        rows="3"
+                        placeholder="Optional note, or PROMPT: exact prompt text"
+                    ></textarea>
+                </label>
+                <div class="inline-image-footer">
+                    <div class="inline-image-controls">
+                        <label class="inline-select">
+                            <span>Resolution preset</span>
+                            <select name="resolution_preset">
+                                {% for option in resolution_options %}
+                                <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>
+                                    {{ option.label }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                    </div>
+                    <div class="inline-metadata">
+                        <span>2-stage SDXL</span>
+                        <span>latent hires flow</span>
+                    </div>
+                    <button class="primary-button compact" type="submit">Generate</button>
+                </div>
+            </form>
+        </div>
+
+        {% endif %}
+    </article>
+
+    {% if message.role == 'assistant' %}
+    {% set message_images = images_by_message.get(message.id, []) %}
+    {% for image in message_images %}
+    <article class="story-block assistant visual-block image-block">
         <div class="message-meta">Visual</div>
         <div class="visual-media">
-            <img src="{{ latest_image.media_url }}" alt="Generated scene image">
+            <img src="{{ image.media_url }}" alt="Generated scene image for this response">
         </div>
         <div class="image-meta">
-            <div><strong>Scene:</strong> {{ latest_image.scene_summary }}</div>
+            <div><strong>Scene:</strong> {{ image.scene_summary }}</div>
             <div>
                 <strong>Preset:</strong>
-                {{ latest_image.base_width }} -> {{ latest_image.target_width }},
-                denoise {{ latest_image.denoise_strength }},
-                seed {{ latest_image.seed }}
+                {{ image.base_width }} -> {{ image.target_width }},
+                denoise {{ image.denoise_strength }},
+                seed {{ image.seed }}
             </div>
         </div>
+        <div class="message-actions">
+            <form
+                hx-post="/images/{{ image.id }}/regenerate"
+                hx-target="#timeline"
+                hx-swap="innerHTML"
+                data-action="image-regenerate"
+                data-image-id="{{ image.id }}"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <button class="micro-button" type="submit">Regenerate Image</button>
+            </form>
+            <form
+                hx-post="/images/{{ image.id }}/delete"
+                hx-target="#timeline"
+                hx-swap="innerHTML"
+                data-action="image-delete"
+                data-image-id="{{ image.id }}"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <button class="micro-button danger" type="submit">Delete Image</button>
+            </form>
+        </div>
+        <div
+            class="message-progress image-progress"
+            data-image-id="{{ image.id }}"
+            hidden
+        >
+            <div class="message-progress-label">Regenerating image...</div>
+            <div class="message-progress-bar"><span></span></div>
+        </div>
     </article>
+    {% endfor %}
     {% endif %}
+    {% endfor %}
 </div>
 {% else %}
 <div class="empty-state">

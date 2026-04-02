@@ -5,6 +5,7 @@ import math
 import random
 import re
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -32,11 +33,39 @@ class ImageGenerationService:
             "state": "idle",
             "detail": "Image engine idle",
             "progress": 0.0,
+            "stage": "",
+            "current_step": 0,
+            "total_steps": 0,
+            "eta_seconds": None,
+            "message_id": None,
+            "image_id": None,
         }
 
-    def _set_status(self, state: str, detail: str, progress: float) -> None:
+    def _set_status(
+        self,
+        state: str,
+        detail: str,
+        progress: float,
+        *,
+        stage: str = "",
+        current_step: int = 0,
+        total_steps: int = 0,
+        eta_seconds: float | None = None,
+        message_id: int | None = None,
+        image_id: int | None = None,
+    ) -> None:
         with self._lock:
-            self._status = {"state": state, "detail": detail, "progress": progress}
+            self._status = {
+                "state": state,
+                "detail": detail,
+                "progress": progress,
+                "stage": stage,
+                "current_step": current_step,
+                "total_steps": total_steps,
+                "eta_seconds": eta_seconds,
+                "message_id": message_id,
+                "image_id": image_id,
+            }
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -53,6 +82,82 @@ class ImageGenerationService:
         if cfg.denoise_strength <= 0:
             return 0
         return int(requested_steps / min(cfg.denoise_strength, 0.999))
+
+    def _merged_dimensions(self, override: dict[str, int] | None) -> dict[str, int]:
+        if not override:
+            return {
+                "base_width": settings.image.base_width,
+                "base_height": settings.image.base_height,
+                "target_width": settings.image.target_width,
+                "target_height": settings.image.target_height,
+            }
+        return {
+            "base_width": int(override["base_width"]),
+            "base_height": int(override["base_height"]),
+            "target_width": int(override["target_width"]),
+            "target_height": int(override["target_height"]),
+        }
+
+    def _release_working_set(self, *items: Any) -> None:
+        for item in items:
+            try:
+                del item
+            except Exception:
+                pass
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+
+    def _format_eta(self, eta_seconds: float | None) -> str:
+        if eta_seconds is None or eta_seconds <= 0:
+            return ""
+        seconds = int(round(eta_seconds))
+        minutes, seconds = divmod(seconds, 60)
+        if minutes:
+            return f"{minutes}m {seconds:02d}s"
+        return f"{seconds}s"
+
+    def _make_progress_callback(
+        self,
+        *,
+        stage_label: str,
+        completed_before: int,
+        total_steps: int,
+        total_combined_steps: int,
+        message_id: int | None,
+        image_id: int | None,
+    ):
+        started_at = time.perf_counter()
+
+        def callback(_pipe, step: int, _timestep: int, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
+            current_step = min(step + 1, total_steps)
+            elapsed = time.perf_counter() - started_at
+            eta = None
+            if current_step > 0 and current_step < total_steps:
+                eta = (elapsed / current_step) * (total_steps - current_step)
+            overall_progress = (completed_before + current_step) / max(total_combined_steps, 1)
+            detail = f"{stage_label} {current_step}/{total_steps}"
+            eta_text = self._format_eta(eta)
+            if eta_text:
+                detail = f"{detail} · ETA {eta_text}"
+            self._set_status(
+                "running",
+                detail,
+                overall_progress,
+                stage=stage_label.lower().replace(" ", "_"),
+                current_step=current_step,
+                total_steps=total_steps,
+                eta_seconds=eta,
+                message_id=message_id,
+                image_id=image_id,
+            )
+            return callback_kwargs
+
+        return callback
 
     def unload(self) -> None:
         with self._lock:
@@ -287,13 +392,17 @@ class ImageGenerationService:
         self,
         character: dict[str, Any],
         conversation_id: int,
+        message_id: int | None,
+        image_id: int | None,
         scene_summary: str,
         positive_prompt: str,
         negative_prompt: str,
+        resolution_override: dict[str, int] | None = None,
     ) -> dict[str, Any]:
-        self._set_status("preparing", "Preparing image request", 0.05)
+        self._set_status("preparing", "Preparing image request", 0.05, message_id=message_id, image_id=image_id)
         self.ensure_loaded()
         cfg = settings.image
+        dims = self._merged_dimensions(resolution_override)
         seed = random.randint(1, 2**31 - 1)
         character_dir = settings.outputs_dir / character["slug"]
         character_dir.mkdir(parents=True, exist_ok=True)
@@ -302,7 +411,7 @@ class ImageGenerationService:
         final_path = character_dir / f"{stamp}_final.png"
 
         if settings.use_mock_image:
-            self._set_status("mock", "Generating mock image", 1.0)
+            self._set_status("mock", "Generating mock image", 1.0, message_id=message_id, image_id=image_id)
             self._save_mock_image(
                 stage1_path,
                 title=f"{character['display_name']} - Stage 1",
@@ -318,13 +427,14 @@ class ImageGenerationService:
             return {
                 "character_id": character["id"],
                 "conversation_id": conversation_id,
+                "message_id": message_id,
                 "scene_summary": scene_summary,
                 "positive_prompt": positive_prompt,
                 "negative_prompt": negative_prompt,
-                "base_width": cfg.base_width,
-                "base_height": cfg.base_height,
-                "target_width": cfg.target_width,
-                "target_height": cfg.target_height,
+                "base_width": dims["base_width"],
+                "base_height": dims["base_height"],
+                "target_width": dims["target_width"],
+                "target_height": dims["target_height"],
                 "denoise_strength": cfg.denoise_strength,
                 "seed": seed,
                 "stage1_output_path": self._relative_output_path(stage1_path),
@@ -334,13 +444,23 @@ class ImageGenerationService:
             }
 
         generator_1 = torch.Generator(device="cuda").manual_seed(seed)
-        self._set_status("conditioning", "Encoding prompt conditioning", 0.22)
+        self._set_status("conditioning", "Encoding prompt conditioning", 0.12, message_id=message_id)
         positive_prompt = self._expand_weights(positive_prompt)
         negative_prompt = self._expand_weights(negative_prompt or "")
         pe, pooled, ne, npooled = self._prepare_prompt_embeds(self._pipe, positive_prompt, negative_prompt)
         requested_second_pass_steps = cfg.hires_steps or cfg.steps
         second_pass_steps = self._compute_second_pass_steps(requested_second_pass_steps)
-        self._set_status("stage1", "Generating base image", 0.48)
+        total_combined_steps = cfg.steps + max(second_pass_steps, 1)
+        self._set_status(
+            "running",
+            f"Base pass 0/{cfg.steps}",
+            0.15,
+                stage="base_pass",
+                current_step=0,
+                total_steps=cfg.steps,
+                message_id=message_id,
+                image_id=image_id,
+            )
         stage1_result = self._pipe(
             prompt_embeds=pe,
             pooled_prompt_embeds=pooled,
@@ -348,11 +468,19 @@ class ImageGenerationService:
             negative_pooled_prompt_embeds=npooled,
             num_inference_steps=cfg.steps,
             guidance_scale=cfg.guidance_scale,
-            width=cfg.base_width,
-            height=cfg.base_height,
+            width=dims["base_width"],
+            height=dims["base_height"],
             generator=generator_1,
             clip_skip=cfg.clip_skip,
             output_type="latent" if cfg.upscale_method == "latent" else "pil",
+            callback_on_step_end=self._make_progress_callback(
+                stage_label="Base pass",
+                completed_before=0,
+                total_steps=cfg.steps,
+                total_combined_steps=total_combined_steps,
+                message_id=message_id,
+                image_id=image_id,
+            ),
         ).images[0]
 
         if cfg.upscale_method == "latent":
@@ -363,11 +491,20 @@ class ImageGenerationService:
             )
         else:
             img_lo = stage1_result
-            second_pass_input = img_lo.resize((cfg.target_width, cfg.target_height), resample=Image.LANCZOS)
+            second_pass_input = img_lo.resize((dims["target_width"], dims["target_height"]), resample=Image.LANCZOS)
         img_lo.save(stage1_path)
 
         generator_2 = torch.Generator(device="cuda").manual_seed(seed)
-        self._set_status("stage2", "Running hires refinement", 0.78)
+        self._set_status(
+            "running",
+            f"Hires pass 0/{second_pass_steps}",
+            cfg.steps / max(total_combined_steps, 1),
+            stage="hires_pass",
+            current_step=0,
+            total_steps=second_pass_steps,
+            message_id=message_id,
+            image_id=image_id,
+        )
         img_hi = self._pipe_i2i(
             image=second_pass_input,
             prompt_embeds=pe,
@@ -379,6 +516,14 @@ class ImageGenerationService:
             guidance_scale=cfg.guidance_scale,
             generator=generator_2,
             clip_skip=cfg.clip_skip,
+            callback_on_step_end=self._make_progress_callback(
+                stage_label="Hires pass",
+                completed_before=cfg.steps,
+                total_steps=second_pass_steps,
+                total_combined_steps=total_combined_steps,
+                message_id=message_id,
+                image_id=image_id,
+            ),
         ).images[0]
         img_hi.save(final_path)
         self._set_status("ready", "Image pipeline ready", 1.0)
@@ -386,13 +531,14 @@ class ImageGenerationService:
         return {
             "character_id": character["id"],
             "conversation_id": conversation_id,
+            "message_id": message_id,
             "scene_summary": scene_summary,
             "positive_prompt": positive_prompt,
             "negative_prompt": negative_prompt,
-            "base_width": cfg.base_width,
-            "base_height": cfg.base_height,
-            "target_width": cfg.target_width,
-            "target_height": cfg.target_height,
+            "base_width": dims["base_width"],
+            "base_height": dims["base_height"],
+            "target_width": dims["target_width"],
+            "target_height": dims["target_height"],
             "denoise_strength": cfg.denoise_strength,
             "second_pass_steps": second_pass_steps,
             "seed": seed,
@@ -401,6 +547,271 @@ class ImageGenerationService:
             "status": "completed",
             "error": "",
         }
+    def _release_working_set(self, *items: Any) -> None:
+        for item in items:
+            try:
+                del item
+            except Exception:
+                pass
+        gc.collect()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+
+    def _make_progress_callback(
+        self,
+        *,
+        stage_label: str,
+        completed_before: int,
+        total_steps: int,
+        total_combined_steps: int,
+        message_id: int | None,
+        image_id: int | None,
+    ):
+        started_at = time.perf_counter()
+
+        def callback(_pipe, step: int, _timestep: int, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
+            current_step = min(step + 1, total_steps)
+            elapsed = time.perf_counter() - started_at
+            eta = None
+            if current_step > 0 and current_step < total_steps:
+                eta = (elapsed / current_step) * (total_steps - current_step)
+            overall_progress = (completed_before + current_step) / max(total_combined_steps, 1)
+            detail = f"{stage_label} {current_step}/{total_steps}"
+            eta_text = self._format_eta(eta)
+            if eta_text:
+                detail = f"{detail} - ETA {eta_text}"
+            self._set_status(
+                "running",
+                detail,
+                overall_progress,
+                stage=stage_label.lower().replace(" ", "_"),
+                current_step=current_step,
+                total_steps=total_steps,
+                eta_seconds=eta,
+                message_id=message_id,
+                image_id=image_id,
+            )
+            return callback_kwargs
+
+        return callback
+
+    def _upscale_latents(self, latents: torch.Tensor, *, target_width: int, target_height: int) -> torch.Tensor:
+        if latents.ndim == 3:
+            latents = latents.unsqueeze(0)
+        cfg = settings.image
+        scale_kwargs: dict[str, Any] = {"mode": "bilinear"}
+        if cfg.upscale_method == "latent":
+            scale_kwargs["antialias"] = False
+            scale_kwargs["align_corners"] = False
+        latent_height = target_height // self._pipe.vae_scale_factor
+        latent_width = target_width // self._pipe.vae_scale_factor
+        return F.interpolate(latents, size=(latent_height, latent_width), **scale_kwargs)
+
+    def generate(
+        self,
+        character: dict[str, Any],
+        conversation_id: int,
+        message_id: int | None,
+        image_id: int | None,
+        scene_summary: str,
+        positive_prompt: str,
+        negative_prompt: str,
+        resolution_override: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        self._set_status("preparing", "Preparing image request", 0.05, message_id=message_id, image_id=image_id)
+        self.ensure_loaded()
+        cfg = settings.image
+        dims = self._merged_dimensions(resolution_override)
+        seed = random.randint(1, 2**31 - 1)
+        character_dir = settings.outputs_dir / character["slug"]
+        character_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stage1_path = character_dir / f"{stamp}_stage1.png"
+        final_path = character_dir / f"{stamp}_final.png"
+
+        generator_1 = None
+        generator_2 = None
+        pe = None
+        pooled = None
+        ne = None
+        npooled = None
+        stage1_result = None
+        stage1_latents = None
+        img_lo = None
+        second_pass_input = None
+        img_hi = None
+
+        try:
+            if settings.use_mock_image:
+                self._set_status("mock", "Generating mock image", 1.0, message_id=message_id, image_id=image_id)
+                self._save_mock_image(
+                    stage1_path,
+                    title=f"{character['display_name']} - Stage 1",
+                    subtitle=scene_summary[:220],
+                    size=(dims["base_width"], dims["base_height"]),
+                )
+                self._save_mock_image(
+                    final_path,
+                    title=f"{character['display_name']} - Hires",
+                    subtitle=positive_prompt[:320],
+                    size=(dims["target_width"], dims["target_height"]),
+                )
+                return {
+                    "character_id": character["id"],
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "scene_summary": scene_summary,
+                    "positive_prompt": positive_prompt,
+                    "negative_prompt": negative_prompt,
+                    "base_width": dims["base_width"],
+                    "base_height": dims["base_height"],
+                    "target_width": dims["target_width"],
+                    "target_height": dims["target_height"],
+                    "denoise_strength": cfg.denoise_strength,
+                    "seed": seed,
+                    "stage1_output_path": self._relative_output_path(stage1_path),
+                    "output_path": self._relative_output_path(final_path),
+                    "status": "completed",
+                    "error": "",
+                }
+
+            generator_1 = torch.Generator(device="cuda").manual_seed(seed)
+            self._set_status(
+                "conditioning",
+                "Encoding prompt conditioning",
+                0.12,
+                message_id=message_id,
+                image_id=image_id,
+            )
+            positive_prompt = self._expand_weights(positive_prompt)
+            negative_prompt = self._expand_weights(negative_prompt or "")
+            pe, pooled, ne, npooled = self._prepare_prompt_embeds(self._pipe, positive_prompt, negative_prompt)
+            requested_second_pass_steps = cfg.hires_steps or cfg.steps
+            second_pass_steps = self._compute_second_pass_steps(requested_second_pass_steps)
+            total_combined_steps = cfg.steps + max(second_pass_steps, 1)
+            self._set_status(
+                "running",
+                f"Base pass 0/{cfg.steps}",
+                0.15,
+                stage="base_pass",
+                current_step=0,
+                total_steps=cfg.steps,
+                message_id=message_id,
+                image_id=image_id,
+            )
+            stage1_result = self._pipe(
+                prompt_embeds=pe,
+                pooled_prompt_embeds=pooled,
+                negative_prompt_embeds=ne,
+                negative_pooled_prompt_embeds=npooled,
+                num_inference_steps=cfg.steps,
+                guidance_scale=cfg.guidance_scale,
+                width=dims["base_width"],
+                height=dims["base_height"],
+                generator=generator_1,
+                clip_skip=cfg.clip_skip,
+                output_type="latent" if cfg.upscale_method == "latent" else "pil",
+                callback_on_step_end=self._make_progress_callback(
+                    stage_label="Base pass",
+                    completed_before=0,
+                    total_steps=cfg.steps,
+                    total_combined_steps=total_combined_steps,
+                    message_id=message_id,
+                    image_id=image_id,
+                ),
+            ).images[0]
+
+            if cfg.upscale_method == "latent":
+                stage1_latents = stage1_result
+                img_lo = self._decode_latents_to_pil(stage1_latents)
+                second_pass_input = self._upscale_latents(
+                    stage1_latents,
+                    target_width=dims["target_width"],
+                    target_height=dims["target_height"],
+                ).to(device="cuda", dtype=self._pipe_i2i.unet.dtype)
+            else:
+                img_lo = stage1_result
+                second_pass_input = img_lo.resize(
+                    (dims["target_width"], dims["target_height"]),
+                    resample=Image.LANCZOS,
+                )
+            img_lo.save(stage1_path)
+
+            generator_2 = torch.Generator(device="cuda").manual_seed(seed)
+            self._set_status(
+                "running",
+                f"Hires pass 0/{second_pass_steps}",
+                cfg.steps / max(total_combined_steps, 1),
+                stage="hires_pass",
+                current_step=0,
+                total_steps=second_pass_steps,
+                message_id=message_id,
+                image_id=image_id,
+            )
+            img_hi = self._pipe_i2i(
+                image=second_pass_input,
+                prompt_embeds=pe,
+                pooled_prompt_embeds=pooled,
+                negative_prompt_embeds=ne,
+                negative_pooled_prompt_embeds=npooled,
+                strength=cfg.denoise_strength,
+                num_inference_steps=second_pass_steps,
+                guidance_scale=cfg.guidance_scale,
+                generator=generator_2,
+                clip_skip=cfg.clip_skip,
+                callback_on_step_end=self._make_progress_callback(
+                    stage_label="Hires pass",
+                    completed_before=cfg.steps,
+                    total_steps=second_pass_steps,
+                    total_combined_steps=total_combined_steps,
+                    message_id=message_id,
+                    image_id=image_id,
+                ),
+            ).images[0]
+            img_hi.save(final_path)
+            self._set_status("ready", "Image pipeline ready", 1.0)
+
+            return {
+                "character_id": character["id"],
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "scene_summary": scene_summary,
+                "positive_prompt": positive_prompt,
+                "negative_prompt": negative_prompt,
+                "base_width": dims["base_width"],
+                "base_height": dims["base_height"],
+                "target_width": dims["target_width"],
+                "target_height": dims["target_height"],
+                "denoise_strength": cfg.denoise_strength,
+                "second_pass_steps": second_pass_steps,
+                "seed": seed,
+                "stage1_output_path": self._relative_output_path(stage1_path),
+                "output_path": self._relative_output_path(final_path),
+                "status": "completed",
+                "error": "",
+            }
+        finally:
+            self._release_working_set(
+                generator_1,
+                generator_2,
+                pe,
+                pooled,
+                ne,
+                npooled,
+                stage1_result,
+                stage1_latents,
+                img_lo,
+                second_pass_input,
+                img_hi,
+            )
 
 
 image_service = ImageGenerationService()

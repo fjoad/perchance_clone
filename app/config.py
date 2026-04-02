@@ -15,6 +15,13 @@ TEMPLATES_DIR = APP_DIR / "templates"
 HF_HOME = Path(r"F:\huggingface\models")
 HF_HUB_CACHE = HF_HOME / "hub"
 IMAGE_CHECKPOINT = HF_HOME / "novaAnimeXL_ilV120.safetensors"
+IMAGE_RESOLUTION_PRESETS = (
+    (512, 512, 1024, 1024),
+    (640, 640, 1280, 1280),
+    (768, 768, 1536, 1536),
+    (896, 896, 1792, 1792),
+    (1024, 1024, 2048, 2048),
+)
 
 
 def configure_process_environment() -> None:
@@ -61,6 +68,31 @@ class Settings:
 
 settings = Settings()
 configure_process_environment()
+
+
+def image_resolution_options() -> list[dict[str, str | int | bool]]:
+    current = (
+        settings.image.base_width,
+        settings.image.base_height,
+        settings.image.target_width,
+        settings.image.target_height,
+    )
+    options: list[dict[str, str | int | bool]] = []
+    for base_w, base_h, target_w, target_h in IMAGE_RESOLUTION_PRESETS:
+        value = f"{base_w}x{base_h}:{target_w}x{target_h}"
+        label = f"{base_w} -> {target_w}"
+        options.append(
+            {
+                "value": value,
+                "label": label,
+                "base_width": base_w,
+                "base_height": base_h,
+                "target_width": target_w,
+                "target_height": target_h,
+                "selected": (base_w, base_h, target_w, target_h) == current,
+            }
+        )
+    return options
 
 
 def ensure_runtime_dirs() -> None:

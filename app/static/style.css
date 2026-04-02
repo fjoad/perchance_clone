@@ -35,7 +35,7 @@ a {
 
 .app-shell {
     display: grid;
-    grid-template-columns: 280px minmax(0, 1fr) 420px;
+    grid-template-columns: 260px minmax(0, 1fr) 340px;
     gap: 20px;
     min-height: 100vh;
     padding: 22px;
@@ -247,7 +247,7 @@ h1, h2, h3 {
 
 .story-feed {
     display: grid;
-    gap: 16px;
+    gap: 18px;
 }
 
 .story-block {
@@ -285,9 +285,118 @@ h1, h2, h3 {
     white-space: pre-wrap;
 }
 
+.message-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.message-actions form {
+    margin: 0;
+}
+
+.micro-button {
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 7px 11px;
+    font: inherit;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 140ms ease, transform 140ms ease, border-color 140ms ease;
+}
+
+.micro-button:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.micro-button.danger {
+    color: #ffbec7;
+    border-color: rgba(255, 111, 145, 0.24);
+    background: rgba(104, 25, 40, 0.22);
+}
+
+.inline-image-tools {
+    margin-top: 14px;
+    padding: 14px;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.inline-image-form {
+    display: grid;
+    gap: 12px;
+}
+
+.inline-image-form label {
+    display: grid;
+    gap: 8px;
+}
+
+.inline-image-form span {
+    color: var(--muted);
+    font-size: 0.84rem;
+}
+
+.inline-image-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.primary-button.compact {
+    padding: 10px 16px;
+}
+
+.message-progress {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.message-progress-label {
+    color: var(--muted);
+    font-size: 0.84rem;
+    margin-bottom: 8px;
+}
+
+.message-progress-bar {
+    height: 7px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.message-progress-bar span {
+    display: block;
+    width: 0%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #74a6ff, #86d4ff);
+    transition: width 220ms ease;
+}
+
 .visual-block {
     display: grid;
     gap: 12px;
+}
+
+.inline-visual-stack {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.nested-visual {
+    max-width: min(88%, 860px);
+    margin: 0;
 }
 
 .visual-media {
@@ -316,7 +425,8 @@ h1, h2, h3 {
 }
 
 textarea,
-input[type="text"] {
+input[type="text"],
+select {
     width: 100%;
     border-radius: 16px;
     border: 1px solid var(--border);
@@ -325,6 +435,7 @@ input[type="text"] {
     padding: 14px 16px;
     resize: vertical;
     font: inherit;
+    color-scheme: dark;
 }
 
 .composer textarea {
@@ -333,7 +444,8 @@ input[type="text"] {
 }
 
 textarea:focus,
-input[type="text"]:focus {
+input[type="text"]:focus,
+select:focus {
     outline: none;
     border-color: rgba(127, 179, 255, 0.5);
     box-shadow: 0 0 0 4px rgba(127, 179, 255, 0.08);
@@ -356,6 +468,35 @@ input[type="text"]:focus {
     font-size: 0.85rem;
     justify-content: flex-start;
     flex-wrap: wrap;
+}
+
+.inline-image-controls {
+    min-width: 220px;
+    display: grid;
+    gap: 8px;
+}
+
+.inline-select {
+    display: grid;
+    gap: 8px;
+}
+
+.inline-select span {
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.inline-select select {
+    min-width: 220px;
+    padding-right: 40px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+        rgba(255, 255, 255, 0.03);
+}
+
+.inline-select select option {
+    background: #161d2d;
+    color: #eef2ff;
 }
 
 .indicator {
@@ -430,6 +571,10 @@ input[type="text"]:focus {
     display: grid;
     gap: 10px;
     line-height: 1.5;
+}
+
+.story-guide p + h4 {
+    margin-top: 6px;
 }
 
 .stack-form {

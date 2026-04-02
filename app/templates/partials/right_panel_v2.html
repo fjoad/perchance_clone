@@ -29,40 +29,11 @@
     <p>{{ pinned_memory or "No pinned memory yet." }}</p>
 </div>
 
-<form
-    class="stack-form image-form"
-    hx-post="/images/{{ active_character.id }}"
-    hx-target="#right-panel"
-    hx-swap="innerHTML"
-    hx-indicator="#image-indicator"
-    data-action="image"
->
-    <label>
-        <span>Optional image note</span>
-        <textarea name="image_note" rows="4" placeholder="Optional note, or PROMPT: exact prompt text"></textarea>
-    </label>
-    <div class="inline-metadata">
-        <span>2-stage SDXL</span>
-        <span>{{ image_cfg.base_width }} -> {{ image_cfg.target_width }}</span>
-        <span>latent hires flow</span>
-    </div>
-    <div id="image-indicator" class="indicator progress-indicator" aria-live="polite">
-        <span class="indicator-label">Generating image...</span>
-        <span class="indicator-bar"><span></span></span>
-    </div>
-    <button class="primary-button" type="submit">Generate Scene Image</button>
-</form>
-
-{% if latest_image and latest_image.media_url %}
-<div class="image-card">
-    <img src="{{ latest_image.media_url }}" alt="Latest generated companion image">
-    <div class="image-meta">
-        <div><strong>Scene:</strong> {{ latest_image.scene_summary }}</div>
-        <div><strong>Seed:</strong> {{ latest_image.seed }}</div>
-    </div>
+<div class="info-card story-guide">
+    <h4>Story Flow</h4>
+    <p>Each narrator response is its own scene beat. Generate visuals from the exact beat you want instead of from one global image panel.</p>
+    <h4>Image preset</h4>
+    <p>{{ image_cfg.base_width }} -> {{ image_cfg.target_width }}, latent hires, DPM++ 2M, denoise {{ image_cfg.denoise_strength }}</p>
+    <h4>Current controls</h4>
+    <p>Use the action row under each narrator block to generate an image, regenerate the latest reply, or delete a block.</p>
 </div>
-{% else %}
-<div class="empty-state small">
-    <p>No image generated yet. Use the companion-aware image flow to create one from the current scene.</p>
-</div>
-{% endif %}

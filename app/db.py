@@ -92,6 +92,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character_id INTEGER NOT NULL,
                 conversation_id INTEGER,
+                message_id INTEGER,
                 scene_summary TEXT NOT NULL,
                 positive_prompt TEXT NOT NULL,
                 negative_prompt TEXT NOT NULL,
@@ -111,6 +112,9 @@ def init_db() -> None:
             );
             """
         )
+        image_columns = {row["name"] for row in conn.execute("PRAGMA table_info(image_requests)").fetchall()}
+        if "message_id" not in image_columns:
+            conn.execute("ALTER TABLE image_requests ADD COLUMN message_id INTEGER")
 
 
 def list_characters() -> list[dict[str, Any]]:
@@ -231,6 +235,12 @@ def ensure_conversation(character_id: int) -> dict[str, Any]:
     return to_dict(new_row)  # type: ignore[return-value]
 
 
+def get_conversation(conversation_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+    return to_dict(row)
+
+
 def list_messages(conversation_id: int) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
@@ -242,6 +252,12 @@ def list_messages(conversation_id: int) -> list[dict[str, Any]]:
             (conversation_id,),
         ).fetchall()
     return [to_dict(row) for row in rows]
+
+
+def get_message(message_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+    return to_dict(row)
 
 
 def add_message(conversation_id: int, role: str, content: str) -> int:
@@ -259,6 +275,22 @@ def add_message(conversation_id: int, role: str, content: str) -> int:
             (now, conversation_id),
         )
     return int(cur.lastrowid)
+
+
+def delete_message(message_id: int) -> None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT conversation_id FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+        if not row:
+            return
+        now = utc_now()
+        conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (now, row["conversation_id"]),
+        )
 
 
 def count_user_messages(conversation_id: int) -> int:
@@ -330,11 +362,11 @@ def save_image_request(payload: dict[str, Any]) -> int:
         cur = conn.execute(
             """
             INSERT INTO image_requests (
-                character_id, conversation_id, scene_summary, positive_prompt, negative_prompt,
+                character_id, conversation_id, message_id, scene_summary, positive_prompt, negative_prompt,
                 base_width, base_height, target_width, target_height, denoise_strength,
                 seed, stage1_output_path, output_path, status, error, created_at
             ) VALUES (
-                :character_id, :conversation_id, :scene_summary, :positive_prompt, :negative_prompt,
+                :character_id, :conversation_id, :message_id, :scene_summary, :positive_prompt, :negative_prompt,
                 :base_width, :base_height, :target_width, :target_height, :denoise_strength,
                 :seed, :stage1_output_path, :output_path, :status, :error, :created_at
             )
@@ -355,6 +387,87 @@ def get_latest_image_for_character(character_id: int) -> dict[str, Any] | None:
             (character_id,),
         ).fetchone()
     return to_dict(row)
+
+
+def get_image_request(image_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM image_requests
+            WHERE id = ?
+            """,
+            (image_id,),
+        ).fetchone()
+    return to_dict(row)
+
+
+def update_image_request(image_id: int, payload: dict[str, Any]) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE image_requests
+            SET character_id = :character_id,
+                conversation_id = :conversation_id,
+                message_id = :message_id,
+                scene_summary = :scene_summary,
+                positive_prompt = :positive_prompt,
+                negative_prompt = :negative_prompt,
+                base_width = :base_width,
+                base_height = :base_height,
+                target_width = :target_width,
+                target_height = :target_height,
+                denoise_strength = :denoise_strength,
+                seed = :seed,
+                stage1_output_path = :stage1_output_path,
+                output_path = :output_path,
+                status = :status,
+                error = :error
+            WHERE id = :image_id
+            """,
+            {**payload, "image_id": image_id},
+        )
+
+
+def list_images_for_conversation(conversation_id: int) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM image_requests
+            WHERE conversation_id = ?
+            ORDER BY id ASC
+            """,
+            (conversation_id,),
+        ).fetchall()
+    return [to_dict(row) for row in rows]
+
+
+def list_images_for_message(message_id: int) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM image_requests
+            WHERE message_id = ?
+            ORDER BY id ASC
+            """,
+            (message_id,),
+        ).fetchall()
+    return [to_dict(row) for row in rows]
+
+
+def delete_images_for_message(message_id: int) -> list[dict[str, Any]]:
+    rows = list_images_for_message(message_id)
+    with connect() as conn:
+        conn.execute("DELETE FROM image_requests WHERE message_id = ?", (message_id,))
+    return rows
+
+
+def delete_image_request(image_id: int) -> dict[str, Any] | None:
+    row = get_image_request(image_id)
+    if not row:
+        return None
+    with connect() as conn:
+        conn.execute("DELETE FROM image_requests WHERE id = ?", (image_id,))
+    return row
 
 
 def seed_sample_character() -> None:
