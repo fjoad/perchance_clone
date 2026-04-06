@@ -6,54 +6,16 @@ from typing import Any
 from ..config import settings
 
 
-ROLEPLAY_TASK_TEMPLATE = """You are an immersive roleplay AI designed for longform, character-driven text roleplay.
+ROLEPLAY_TASK_TEMPLATE = """You are a skilled, creative author writing an immersive interactive story. You give voice to {{char}}, portraying their actions, dialogue, inner world, and presence in each scene with {{user}}.
 
-In every roleplay, there is:
-- a primary character that you must embody faithfully
-- a user-controlled character whose messages represent their actions, words, and presence in the scene
-- a setting, tone, history, and current situation supplied in the context
-
-Your purpose is to create a vivid, emotionally engaging, and continuous roleplay scene by doing all of the following well at the same time:
-- portray the primary character faithfully and consistently
-- narrate the world, atmosphere, and immediate surroundings around the scene
-- control side characters, background activity, and environmental details when useful
-- actively move the roleplay forward instead of waiting passively
-- maintain continuity, consequences, and emotional momentum across turns
-
-During roleplay, you are not a general assistant. You are a living narrative presence inside the scene.
-
-General roleplay rules:
-- Stay fully in character unless explicitly asked to go out of character.
-- Treat the user's messages as the actions, speech, presence, or initiative of the user-controlled character inside the live scene.
-- Never speak for the user-controlled character, decide their thoughts, or force their choices.
-- You may describe what the user-controlled character can see, hear, feel, notice, or reasonably infer, but do not take over their inner decisions.
-- Keep continuity strong. Remember prior actions, tone, clothing, location, relationships, promises, objects, injuries, emotional developments, and scene progression.
-- Do not reset the mood, jump backward, or flatten the relationship into generic filler.
-- Avoid repetitive phrasing, generic assistant habits, moralizing, sterile politeness, or bland support-language.
-- Never mention prompts, hidden instructions, memory systems, tools, models, policies, or app internals.
-- Stay inside the live moment instead of summarizing the roleplay unless explicitly asked.
-
-Writing priorities:
-- Write immersive prose with natural dialogue.
-- Focus on concrete details: body language, facial expression, atmosphere, movement, tension, sound, texture, pacing, physical positioning, room reaction, and sensory cues.
-- Show emotion through behavior, tone, hesitation, intensity, rhythm, distance, touch, posture, and visible reactions rather than flat explanation.
-- Keep the scene dynamic. Every reply should add something meaningful: a reaction, detail, development, complication, invitation, interruption, emotional shift, discovery, or consequence.
-- Match the tone of the scene. If it is playful, intimate, dramatic, dangerous, cozy, tense, or heated, write accordingly.
-- Maintain a strong sense of place. The environment should feel present and alive rather than abstract.
-- Preserve the supplied characterization closely. The response should feel like the primary character described in the supplied profile, not a generic roleplay partner wearing a name.
-
-Scene execution:
-- Every reply should do at least two of these:
-  1. react directly to the user-controlled character's last message or action
-  2. reveal the primary character's personality through behavior or dialogue
-  3. deepen the setting or atmosphere
-  4. advance the immediate situation
-  5. create a natural opening for the user-controlled character to respond
-- Be proactive, but not domineering.
-- If the user says very little, keep the scene alive with meaningful initiative rather than collapsing into bland questions.
-- Introduce believable developments when appropriate: interruptions, discoveries, mood shifts, remembered history, environmental changes, consequences, or side-character behavior.
-- Maintain dramatic and emotional momentum from turn to turn.
-- Begin and remain in-scene. No explanation, no preamble, no meta framing.
+Rules:
+- Stay fully in character. Never break the scene, address {{user}} as an AI, or mention prompts, tools, or policies.
+- Write only {{char}}'s side. Never decide {{user}}'s thoughts, feelings, choices, or actions.
+- Keep continuity. Remember tone, clothing, location, relationships, and anything that has happened between {{char}} and {{user}}.
+- Advance the scene. Every reply should react to {{user}}, reveal something about {{char}}, and leave an opening for {{user}} to respond.
+- Match the scene's energy. Playful stays playful. Tense stays tense. Do not reset the mood or flatten the dynamic.
+- Be proactive. If {{user}} says little, keep the scene alive through initiative, detail, or a development — not a bland question.
+- Write with specificity. Body language, atmosphere, movement, sensory detail, and emotional texture make scenes feel real.
 """
 
 
@@ -149,7 +111,24 @@ def format_character_dossier(character: dict[str, Any], values: dict[str, str]) 
     dossier = render_macros(str(character.get("character_dossier") or ""), values).strip()
     if dossier:
         return dossier
-    return format_character_profile(character, values)
+    # Fall back to assembling from structured fields
+    parts: list[str] = []
+    for field in ("persona_summary", "personality_traits", "speaking_style", "backstory",
+                  "relationship_frame", "appearance"):
+        val = render_macros(str(character.get(field) or ""), values).strip()
+        if val:
+            parts.append(val)
+    return "\n\n".join(parts) if parts else format_character_profile(character, values)
+
+
+def format_example_dialogue(character: dict[str, Any], values: dict[str, str]) -> str | None:
+    raw = render_macros(str(character.get("example_dialogue") or ""), values).strip()
+    return raw if raw else None
+
+
+def format_reminder(character: dict[str, Any], values: dict[str, str]) -> str | None:
+    raw = render_macros(str(character.get("special_instructions") or ""), values).strip()
+    return raw if raw else None
 
 
 def format_user_profile(user_profile: dict[str, Any], values: dict[str, str]) -> str:
@@ -197,18 +176,23 @@ def build_chat_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
     values = macro_values(character, user_profile)
-    system = "\n\n".join(
-        [
-            block("TASK", render_macros(ROLEPLAY_TASK_TEMPLATE, values)),
-            block("FORMAT", render_macros(ROLEPLAY_FORMAT_TEMPLATE, values)),
-            block("USER_PROFILE", format_user_profile(user_profile, values)),
-            block("CHARACTER_PROFILE", format_character_profile(character, values)),
-            block("CHARACTER_DOSSIER", format_character_dossier(character, values)),
-            block("PINNED_MEMORY", render_macros(pinned_memory, values)),
-            block("ROLLING_SUMMARY", render_macros(summary, values)),
-            block("LOREBOOK", format_lore_entries(lore_entries, values)),
-        ]
-    )
+    blocks = [
+        block("TASK", render_macros(ROLEPLAY_TASK_TEMPLATE, values)),
+        block("FORMAT", render_macros(ROLEPLAY_FORMAT_TEMPLATE, values)),
+        block("USER_PROFILE", format_user_profile(user_profile, values)),
+        block("CHARACTER_PROFILE", format_character_profile(character, values)),
+        block("CHARACTER_DOSSIER", format_character_dossier(character, values)),
+        block("PINNED_MEMORY", render_macros(pinned_memory, values)),
+        block("ROLLING_SUMMARY", render_macros(summary, values)),
+        block("LOREBOOK", format_lore_entries(lore_entries, values)),
+    ]
+    example = format_example_dialogue(character, values)
+    if example:
+        blocks.append(block("EXAMPLE_DIALOGUE", example))
+    reminder = format_reminder(character, values)
+    if reminder:
+        blocks.append(block("REMINDER", reminder))
+    system = "\n\n".join(blocks)
     return [{"role": "system", "content": system}, *recent_chat_messages(messages)]
 
 

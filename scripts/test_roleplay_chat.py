@@ -86,6 +86,18 @@ def reset_peak_mem() -> None:
         pass
 
 
+def flush_console_typeahead() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import msvcrt
+
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+    except Exception:
+        pass
+
+
 def resolve_character(raw: str) -> dict[str, Any]:
     if raw.isdigit():
         by_id = get_character(int(raw))
@@ -168,7 +180,10 @@ def generate_text(
                 eos_token_id=tokenizer.eos_token_id,
             )
         new_ids = output[0, inputs["input_ids"].shape[1] :]
-        return tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+        result = tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+        if torch.cuda.is_available():
+            print(f"[diag] vram_peak_during_generate={format_mem()}")
+        return result
     finally:
         del output
         del new_ids
@@ -216,10 +231,12 @@ def main() -> int:
 
     if torch.cuda.is_available():
         print(f"[cuda] after_load={format_mem()}")
+    flush_console_typeahead()
     print("Type '/quit' to exit, '/prompt' to print the current system prompt, or '/summary' to print the current summary.\n")
 
     try:
         while True:
+            flush_console_typeahead()
             user_text = input(f"{user_profile.get('display_name') or 'Anon'}> ").strip()
             if not user_text:
                 continue
@@ -241,6 +258,17 @@ def main() -> int:
 
             if args.show_system_prompt:
                 print(f"\n[system prompt]\n{compiled[0]['content']}\n")
+
+            # --- VRAM diagnostics ---
+            token_ids = tokenizer.apply_chat_template(compiled, tokenize=True, add_generation_prompt=True)
+            n_tok = len(token_ids)
+            num_layers = getattr(model.config, "num_hidden_layers", 32)
+            num_heads = getattr(model.config, "num_attention_heads", 32)
+            attn_peak_gb = (num_heads * n_tok * n_tok * 2) / (1024 ** 3)
+            print(f"[diag] input_tokens={n_tok}  layers={num_layers}  heads={num_heads}  predicted_attn_peak={attn_peak_gb:.2f} GB")
+            if torch.cuda.is_available():
+                print(f"[diag] vram_before_generate={format_mem()}")
+            # --- end diagnostics ---
 
             started = time.perf_counter()
             reply = generate_text(

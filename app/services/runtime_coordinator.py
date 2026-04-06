@@ -42,7 +42,7 @@ class RuntimeCoordinator:
     def shutdown(self) -> None:
         with self._lock:
             image_service.unload()
-            text_service.unload()
+            text_service.shutdown()
 
     def preload_text_async(self) -> None:
         if settings.use_mock_text:

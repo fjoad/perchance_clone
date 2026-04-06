@@ -1,7 +1,7 @@
 # Text Roleplay Runbook
 
 Status: working baseline for text-roleplay tuning  
-Last updated: April 2, 2026
+Last updated: April 5, 2026
 
 ## Baseline
 
@@ -78,7 +78,32 @@ Do not allow model downloads to spill onto `C:` again.
 ```cmd
 cd /d F:\projects\perchance_clone\perchance_clone
 conda activate companion_v1
+set HF_HOME=F:\huggingface\models
+set HF_HUB_CACHE=F:\huggingface\models\hub
+set HUGGINGFACE_HUB_CACHE=F:\huggingface\models\hub
 python scripts\test_roleplay_chat_qwen.py --character atago --disable-warmup
+```
+
+### Qwen uncensored comparison
+
+```cmd
+cd /d F:\projects\perchance_clone\perchance_clone
+conda activate companion_v1
+set HF_HOME=F:\huggingface\models
+set HF_HUB_CACHE=F:\huggingface\models\hub
+set HUGGINGFACE_HUB_CACHE=F:\huggingface\models\hub
+python scripts\test_roleplay_chat_qwen_uncensored.py --character atago --disable-warmup --local-only
+```
+
+### Meissa comparison
+
+```cmd
+cd /d F:\projects\perchance_clone\perchance_clone
+conda activate companion_v1
+set HF_HOME=F:\huggingface\models
+set HF_HUB_CACHE=F:\huggingface\models\hub
+set HUGGINGFACE_HUB_CACHE=F:\huggingface\models\hub
+python scripts\test_roleplay_chat_meissa.py --character atago --disable-warmup --local-only
 ```
 
 ### Show the exact stitched prompt
@@ -86,6 +111,9 @@ python scripts\test_roleplay_chat_qwen.py --character atago --disable-warmup
 ```cmd
 cd /d F:\projects\perchance_clone\perchance_clone
 conda activate companion_v1
+set HF_HOME=F:\huggingface\models
+set HF_HUB_CACHE=F:\huggingface\models\hub
+set HUGGINGFACE_HUB_CACHE=F:\huggingface\models\hub
 python scripts\test_roleplay_chat_qwen.py --character atago --disable-warmup --show-system-prompt
 ```
 
@@ -94,20 +122,31 @@ python scripts\test_roleplay_chat_qwen.py --character atago --disable-warmup --s
 ```cmd
 cd /d F:\projects\perchance_clone\perchance_clone
 conda activate companion_v1
+set HF_HOME=F:\huggingface\models
+set HF_HUB_CACHE=F:\huggingface\models\hub
+set HUGGINGFACE_HUB_CACHE=F:\huggingface\models\hub
 python scripts\test_roleplay_chat.py --character atago --disable-warmup
 ```
 
 ## Comparison Goal
 
-The next model comparison target is the official Meta Llama 3.1 8B instruct model.
+The comparison order is now:
 
-Planned comparison candidate:
+1. current stock Qwen baseline
+2. uncensored Qwen instruct
+3. Meissa Qwen instruct
+4. official Meta Llama 3.1 8B instruct
 
+Planned comparison candidates:
+
+- `Orion-zhen/Qwen2.5-7B-Instruct-Uncensored`
+- `Orion-zhen/Meissa-Qwen2.5-7B-Instruct`
 - `meta-llama/Meta-Llama-3.1-8B-Instruct`
 
 Important:
 
-- this model is gated on Hugging Face
+- the Qwen-family comparison models should also stay on `F:`
+- the Meta Llama model is gated on Hugging Face
 - use a local Hugging Face login or token on the machine
 - keep the cache rooted on `F:\huggingface\models`
 
@@ -126,4 +165,4 @@ A good reply should:
 
 - more text-quality tuning against live Atago outputs
 - better model load/unload UI feedback
-- Llama-family side-by-side comparison
+- side-by-side comparison across stock Qwen, uncensored Qwen, Meissa, and then Llama

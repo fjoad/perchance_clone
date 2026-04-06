@@ -15,6 +15,8 @@ TEMPLATES_DIR = APP_DIR / "templates"
 HF_HOME = Path(r"F:\huggingface\models")
 HF_HUB_CACHE = HF_HOME / "hub"
 IMAGE_CHECKPOINT = HF_HOME / "novaAnimeXL_ilV120.safetensors"
+OLLAMA_EXE = Path(r"F:\Programs\Ollama\ollama.exe")
+OLLAMA_MODELS_DIR = Path(r"F:\ollama\models")
 IMAGE_RESOLUTION_PRESETS = (
     (512, 512, 1024, 1024),
     (640, 640, 1280, 1280),
@@ -54,8 +56,14 @@ class Settings:
     hf_hub_cache: Path = HF_HUB_CACHE
     db_path: Path = RUNTIME_DIR / "companion_v1_app.sqlite3"
     text_model_id: str = "Qwen/Qwen2.5-7B-Instruct"
+    qwen_uncensored_model_id: str = "Orion-zhen/Qwen2.5-7B-Instruct-Uncensored"
+    qwen_meissa_model_id: str = "Orion-zhen/Meissa-Qwen2.5-7B-Instruct"
     llama_comparison_model_id: str = "meta-llama/Meta-Llama-3.1-8B-Instruct"
     roleplay_benchmark_model_id: str = "PygmalionAI/Pygmalion-3-12B"
+    ollama_exe: Path = OLLAMA_EXE
+    ollama_models_dir: Path = OLLAMA_MODELS_DIR
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model_name: str = "qwen-uncensored"
     use_mock_text: bool = os.getenv("COMPANION_USE_MOCK_TEXT", "0") == "1"
     use_mock_image: bool = os.getenv("COMPANION_USE_MOCK_IMAGE", "0") == "1"
     summary_interval_user_turns: int = 6

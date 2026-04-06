@@ -1,23 +1,21 @@
 from __future__ import annotations
 
-import gc
+import json
+import os
+import subprocess
 import threading
+import time
+import urllib.request
 from typing import Any
 
 from ..config import settings
-
-import torch
-import transformers.modeling_utils as modeling_utils
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-
 from . import prompts
 
 
 class TextGenerationService:
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._model = None
-        self._tokenizer = None
+        self._ollama_proc: subprocess.Popen | None = None
         self._status = {
             "state": "idle",
             "detail": "Text engine idle",
@@ -32,76 +30,119 @@ class TextGenerationService:
         with self._lock:
             return {
                 **self._status,
-                "loaded": self._model is not None and self._tokenizer is not None,
+                "loaded": self._is_model_in_vram(),
                 "mock": settings.use_mock_text,
             }
 
-    def is_loaded(self) -> bool:
-        with self._lock:
-            return self._model is not None and self._tokenizer is not None
+    # ------------------------------------------------------------------
+    # Ollama process and model state helpers
+    # ------------------------------------------------------------------
 
-    def unload(self) -> None:
-        with self._lock:
-            self._set_status("unloading", "Unloading text model", 0.15)
-            if self._model is not None:
-                del self._model
-                self._model = None
-            if self._tokenizer is not None:
-                del self._tokenizer
-                self._tokenizer = None
-            gc.collect()
-            if torch.cuda.is_available():
-                try:
-                    torch.cuda.synchronize()
-                except Exception:
-                    pass
-                torch.cuda.empty_cache()
-                try:
-                    torch.cuda.ipc_collect()
-                except Exception:
-                    pass
-            self._set_status("idle", "Text engine idle", 0.0)
+    def _ollama_running(self) -> bool:
+        try:
+            urllib.request.urlopen(settings.ollama_base_url, timeout=2)
+            return True
+        except Exception:
+            return False
+
+    def _is_model_in_vram(self) -> bool:
+        try:
+            req = urllib.request.Request(
+                f"{settings.ollama_base_url}/api/ps",
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read())
+            return any(
+                m.get("name", "").startswith(settings.ollama_model_name)
+                for m in data.get("models", [])
+            )
+        except Exception:
+            return False
+
+    def is_loaded(self) -> bool:
+        return self._is_model_in_vram()
+
+    def _start_ollama(self) -> None:
+        if self._ollama_running():
+            return
+        env = os.environ.copy()
+        env["OLLAMA_MODELS"] = str(settings.ollama_models_dir)
+        env["OLLAMA_FLASH_ATTENTION"] = "1"
+        env["OLLAMA_KV_CACHE_TYPE"] = "q8_0"
+        env["OLLAMA_NUM_PARALLEL"] = "1"
+        env["OLLAMA_MAX_LOADED_MODELS"] = "1"
+        self._ollama_proc = subprocess.Popen(
+            [str(settings.ollama_exe), "serve"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for _ in range(30):
+            if self._ollama_running():
+                return
+            time.sleep(1)
+
+    # ------------------------------------------------------------------
+    # Load / unload
+    # ------------------------------------------------------------------
 
     def ensure_loaded(self) -> None:
         if settings.use_mock_text:
             self._set_status("mock", "Mock text mode", 1.0)
             return
-        if self._model is not None and self._tokenizer is not None:
-            self._set_status("ready", "Text model ready", 1.0)
-            return
         with self._lock:
-            if self._model is not None and self._tokenizer is not None:
+            self._set_status("loading", "Starting Ollama", 0.1)
+            self._start_ollama()
+            if self._is_model_in_vram():
                 self._set_status("ready", "Text model ready", 1.0)
                 return
-            self._set_status("loading", "Loading text model", 0.2)
-            if torch.cuda.is_available():
-                try:
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-            bnb_cfg = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-            )
-            modeling_utils.caching_allocator_warmup = lambda *_, **__: None
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                settings.text_model_id,
-                use_fast=True,
-                cache_dir=str(settings.hf_hub_cache),
-            )
-            self._model = AutoModelForCausalLM.from_pretrained(
-                settings.text_model_id,
-                quantization_config=bnb_cfg,
-                device_map="auto",
-                trust_remote_code=False,
-                cache_dir=str(settings.hf_hub_cache),
-                low_cpu_mem_usage=True,
-            )
-            if self._tokenizer.pad_token_id is None and self._tokenizer.eos_token_id is not None:
-                self._tokenizer.pad_token = self._tokenizer.eos_token
+            self._set_status("loading", "Loading text model into GPU", 0.4)
+            try:
+                payload = json.dumps({
+                    "model": settings.ollama_model_name,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 1,
+                    "stream": False,
+                }).encode()
+                req = urllib.request.Request(
+                    f"{settings.ollama_base_url}/v1/chat/completions",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=300)
+            except Exception:
+                pass
             self._set_status("ready", "Text model ready", 1.0)
+
+    def unload(self) -> None:
+        self._set_status("unloading", "Unloading text model", 0.15)
+        try:
+            payload = json.dumps({
+                "model": settings.ollama_model_name,
+                "keep_alive": 0,
+            }).encode()
+            req = urllib.request.Request(
+                f"{settings.ollama_base_url}/api/generate",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=30)
+        except Exception:
+            pass
+        self._set_status("idle", "Text engine idle", 0.0)
+
+    def shutdown(self) -> None:
+        self.unload()
+        if self._ollama_proc is not None:
+            self._ollama_proc.terminate()
+            self._ollama_proc = None
+
+    # ------------------------------------------------------------------
+    # Core generation
+    # ------------------------------------------------------------------
 
     def _generate(
         self,
@@ -109,64 +150,40 @@ class TextGenerationService:
         *,
         max_new_tokens: int,
         temperature: float,
-        min_new_tokens: int = 0,
         top_p: float = 0.95,
         repetition_penalty: float = 1.05,
+        **_kwargs: Any,
     ) -> str:
         if settings.use_mock_text:
             self._set_status("mock", "Generating mock text response", 1.0)
             return "Mock response enabled."
         self.ensure_loaded()
-        self._set_status("preparing", "Preparing reply", 0.45)
-        prompt = None
-        inputs = None
-        output = None
-        new_ids = None
-        try:
-            prompt = self._tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            inputs = self._tokenizer(
-                prompt,
-                return_tensors="pt",
-                return_token_type_ids=False,
-            )
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-            self._set_status("generating", "Generating reply", 0.8)
-            with torch.no_grad():
-                output = self._model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    min_new_tokens=min_new_tokens,
-                    do_sample=True,
-                    temperature=temperature,
-                    top_p=top_p,
-                    repetition_penalty=repetition_penalty,
-                    pad_token_id=self._tokenizer.eos_token_id,
-                    eos_token_id=self._tokenizer.eos_token_id,
-                )
-            new_ids = output[0, inputs["input_ids"].shape[1] :]
-            return self._tokenizer.decode(new_ids, skip_special_tokens=True).strip()
-        finally:
-            del output
-            del new_ids
-            del inputs
-            del prompt
-            gc.collect()
-            if torch.cuda.is_available():
-                try:
-                    torch.cuda.synchronize()
-                except Exception:
-                    pass
-                torch.cuda.empty_cache()
-                try:
-                    torch.cuda.ipc_collect()
-                except Exception:
-                    pass
-            self._set_status("ready", "Text model ready", 1.0)
+        self._set_status("generating", "Generating reply", 0.8)
+        payload = json.dumps({
+            "model": settings.ollama_model_name,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "top_p": top_p,
+                "repeat_penalty": repetition_penalty,
+                "num_predict": max_new_tokens,
+            },
+        }).encode()
+        req = urllib.request.Request(
+            f"{settings.ollama_base_url}/v1/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            data = json.loads(resp.read())
+        self._set_status("ready", "Text model ready", 1.0)
+        return data["choices"][0]["message"]["content"].strip()
+
+    # ------------------------------------------------------------------
+    # Mock helper
+    # ------------------------------------------------------------------
 
     def _mock_story_reply(self, character: dict[str, Any], messages: list[dict[str, Any]]) -> str:
         latest_user = next((msg["content"] for msg in reversed(messages) if msg["role"] == "user"), "").strip()
@@ -180,6 +197,10 @@ class TextGenerationService:
             "Her reply leaves the scene open instead of closing it off, giving the user a natural next beat to answer."
         )
 
+    # ------------------------------------------------------------------
+    # High-level task methods (same interface as before)
+    # ------------------------------------------------------------------
+
     def chat_reply(
         self,
         character: dict[str, Any],
@@ -191,11 +212,12 @@ class TextGenerationService:
     ) -> str:
         if settings.use_mock_text:
             return self._mock_story_reply(character, messages)
-        compiled = prompts.build_chat_messages(character, user_profile, pinned_memory, summary, lore_entries, messages)
+        compiled = prompts.build_chat_messages(
+            character, user_profile, pinned_memory, summary, lore_entries, messages
+        )
         return self._generate(
             compiled,
             max_new_tokens=520,
-            min_new_tokens=150,
             temperature=0.9,
             top_p=0.94,
             repetition_penalty=1.03,
@@ -211,7 +233,9 @@ class TextGenerationService:
     ) -> str:
         if settings.use_mock_text:
             return previous_summary or "Mock summary: maintain tone, continuity, and relationship context."
-        compiled = prompts.build_summary_messages(character, user_profile, pinned_memory, previous_summary, messages)
+        compiled = prompts.build_summary_messages(
+            character, user_profile, pinned_memory, previous_summary, messages
+        )
         return self._generate(compiled, max_new_tokens=180, temperature=0.2, top_p=0.9, repetition_penalty=1.02)
 
     def extract_scene(

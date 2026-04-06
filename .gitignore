@@ -36,6 +36,10 @@ tags_build/
 Thumbs.db
 .DS_Store
 
+# Keep repo docs tracked explicitly
+!docs/
+!docs/*.md
+
 # Root-level generated test images / media artifacts
 /*.png
 /*.jpg
