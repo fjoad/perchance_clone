@@ -40,6 +40,8 @@ from app.db import (
     list_characters,
     seed_atago_character,
     seed_default_user_profile,
+    seed_echidna_character,
+    seed_mirajane_character,
     seed_sample_character,
 )
 from app.services import prompts
@@ -208,6 +210,8 @@ def main() -> int:
     seed_sample_character()
     seed_default_user_profile()
     seed_atago_character()
+    seed_echidna_character()
+    seed_mirajane_character()
 
     character = resolve_character(args.character)
     user_profile = get_user_profile()

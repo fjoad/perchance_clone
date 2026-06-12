@@ -26,7 +26,7 @@ from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 HF_HOME = Path(r"F:\huggingface\models")
-OLLAMA_EXE = Path(r"F:\Programs\Ollama\ollama.exe")
+OLLAMA_EXE = Path(r"F:\Programs\Ollama_0.21.0\ollama.exe")
 OLLAMA_MODELS = r"F:\ollama\models"
 OLLAMA_BASE_URL = "http://localhost:11434"
 
@@ -52,6 +52,8 @@ from app.db import (
     list_characters,
     seed_atago_character,
     seed_default_user_profile,
+    seed_echidna_character,
+    seed_mirajane_character,
     seed_sample_character,
 )
 from app.services import prompts
@@ -179,6 +181,8 @@ def main() -> int:
     seed_sample_character()
     seed_default_user_profile()
     seed_atago_character()
+    seed_echidna_character()
+    seed_mirajane_character()
 
     character = resolve_character(args.character)
     user_profile = get_user_profile()

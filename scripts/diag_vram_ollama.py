@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 HF_HOME = Path(r"F:\huggingface\models")
-OLLAMA_EXE = Path(r"F:\Programs\Ollama\ollama.exe")
+OLLAMA_EXE = Path(r"F:\Programs\Ollama_0.21.0\ollama.exe")
 OLLAMA_MODELS = r"F:\ollama\models"
 OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
 MODEL_NAME = "dolphin-llama3"
@@ -246,4 +246,3 @@ def _main() -> None:
 
 if __name__ == "__main__":
     main()
-

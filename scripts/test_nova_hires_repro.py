@@ -32,7 +32,7 @@ def configure_environment() -> None:
     os.environ["HF_HUB_CACHE"] = str(HF_HUB_CACHE)
     os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_HUB_CACHE)
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    temp_dir = RUNTIME_DIR / "temp"
+    temp_dir = RUNTIME_DIR / "codex_temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
     os.environ["TMP"] = str(temp_dir)
     os.environ["TEMP"] = str(temp_dir)
@@ -305,6 +305,8 @@ def main() -> int:
         str(checkpoint),
         torch_dtype=torch.float16,
         safety_checker=None,
+        cache_dir=str(HF_HUB_CACHE),
+        local_files_only=True,
     ).to("cuda")
     apply_scheduler(pipe, args.scheduler)
     pipe.enable_vae_tiling()
