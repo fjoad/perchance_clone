@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 
 {% block body %}
-<div class="app-shell">
-    <aside class="sidebar panel">
-        <div class="panel-header">
+<div class="app-shell vn-app-shell" data-active-character-id="{{ active_character.id }}">
+    <aside class="cast-panel">
+        <div class="brand-lockup">
             <div>
-                <p class="eyebrow">Companion V1</p>
-                <h1>Characters</h1>
+                <p class="eyebrow">Local Visual Novel</p>
+                <h1>Companion</h1>
             </div>
             <button
-                class="ghost-button"
+                class="ghost-button compact"
                 hx-get="/characters/new-form"
                 hx-target="#modal-panel"
                 hx-swap="innerHTML"
@@ -27,18 +27,65 @@
                 <div class="character-avatar">{{ character.display_name[:1] }}</div>
                 <div>
                     <div class="character-name">{{ character.display_name }}</div>
-                    <div class="character-subtitle">{{ character.persona_summary }}</div>
+                    <div class="character-subtitle">
+                        {{ character.source_media or character.persona_summary or "Original companion" }}
+                    </div>
                 </div>
             </a>
             {% endfor %}
         </nav>
+
+        <div class="runtime-note">
+            <span class="runtime-pin"></span>
+            <p>Offline runtime: Ollama text, A1111 SDXL images, guarded memory handoff.</p>
+        </div>
     </aside>
 
-    <main class="chat-column panel">
-        <div class="status-rail">
+    <main class="vn-stage">
+        <section class="stage-header">
+            <div class="scene-kicker">Current Scene</div>
+            <div>
+                <h2>{{ active_character.display_name }}</h2>
+                <p>
+                    {% if active_character.source_media %}
+                    {{ active_character.source_media }} identity anchored for text and images.
+                    {% else %}
+                    Original companion profile active.
+                    {% endif %}
+                </p>
+            </div>
+            <div class="stage-actions">
+                <span class="header-pill">Text first, image after</span>
+                <button class="ghost-button compact" type="button" onclick="window.toggleDiagnosticsDrawer()">
+                    Runtime
+                </button>
+            </div>
+        </section>
+
+        <section class="scene-status-banner" id="scene-status-banner" data-state="idle" aria-live="polite">
+            <span class="status-orb"></span>
+            <span class="scene-status-copy">Ready for the next scene beat.</span>
+        </section>
+
+        <section class="scene-primer" aria-label="How the scene loop works">
+            <div>
+                <strong>1. Write</strong>
+                <span>Give Anon a line, action, or choice.</span>
+            </div>
+            <div>
+                <strong>2. Reply</strong>
+                <span>{{ active_character.display_name }} answers as the next story beat.</span>
+            </div>
+            <div>
+                <strong>3. Visualize</strong>
+                <span>Render the beat now, or let auto-image handle it after text.</span>
+            </div>
+        </section>
+
+        <section class="status-rail" aria-label="Local engine status">
             <article id="text-engine-chip" class="engine-chip" data-state="idle">
                 <div class="engine-chip-top">
-                    <span class="engine-label">Text Engine</span>
+                    <span class="engine-label">Story Engine</span>
                     <span class="engine-state">idle</span>
                 </div>
                 <div class="engine-detail">Waiting for first reply</div>
@@ -46,21 +93,33 @@
             </article>
             <article id="image-engine-chip" class="engine-chip" data-state="idle">
                 <div class="engine-chip-top">
-                    <span class="engine-label">Image Engine</span>
+                    <span class="engine-label">Visual Engine</span>
                     <span class="engine-state">idle</span>
                 </div>
                 <div class="engine-detail">Loads on first image request</div>
                 <div class="engine-progress"><span class="engine-progress-fill"></span></div>
             </article>
-        </div>
+        </section>
 
-        <div class="panel-header">
+        <section class="readiness-panel" id="readiness-panel" data-ready="false" aria-live="polite">
             <div>
-                <p class="eyebrow">Active Companion</p>
-                <h2>{{ active_character.display_name }}</h2>
+                <p class="eyebrow">Startup Gate</p>
+                <strong id="readiness-title">Warming local engines</strong>
+                <span id="readiness-detail">Checking runtime state...</span>
             </div>
-            <div class="header-pill">Story-first flow - latent hires default</div>
-        </div>
+            <button
+                class="micro-button readiness-retry"
+                id="readiness-retry"
+                type="button"
+                hidden
+                onclick="window.retryWarmup()"
+            >
+                Retry Engines
+            </button>
+            <div class="readiness-progress">
+                <span id="readiness-progress-fill"></span>
+            </div>
+        </section>
 
         {% if status_message %}
         <div class="banner success">{{ status_message }}</div>
@@ -74,36 +133,93 @@
         </section>
 
         <form
-            class="composer"
-            hx-post="/chat/{{ active_character.id }}"
-            hx-target="#timeline"
-            hx-swap="innerHTML"
-            hx-indicator="#chat-indicator"
+            class="composer director-composer"
             data-action="chat"
+            data-stream-url="/chat/{{ active_character.id }}/stream"
+            data-character-name="{{ active_character.display_name }}"
         >
             <label class="sr-only" for="message">Message</label>
             <textarea
                 id="message"
                 name="message"
                 rows="2"
-                placeholder="Say something that moves the relationship or the scene forward..."
+                placeholder="Write Anon's next line, action, or choice... Ctrl+Enter to advance."
                 required
             ></textarea>
             <div class="composer-footer">
+                <div class="composer-options">
+                    <label class="checkbox-row auto-image-toggle">
+                        <input type="checkbox" name="auto_image" value="1">
+                        <span>Generate image after reply</span>
+                    </label>
+                    <fieldset class="preset-picker" aria-label="Image preset">
+                        <legend>Image preset</legend>
+                        <div class="preset-options">
+                            {% for option in resolution_options %}
+                            <label class="preset-option">
+                                <input
+                                    type="radio"
+                                    name="resolution_preset"
+                                    value="{{ option.value }}"
+                                    {% if option.selected %}checked{% endif %}
+                                >
+                                <span>
+                                    <strong>{{ option.name }}</strong>
+                                    <small>{{ option.description }}</small>
+                                </span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </fieldset>
+                </div>
                 <div id="chat-indicator" class="indicator progress-indicator" aria-live="polite">
                     <span class="indicator-label">Generating reply...</span>
                     <span class="indicator-bar"><span></span></span>
                 </div>
-                <button class="primary-button" type="submit">Send</button>
+                <button class="primary-button" type="submit">Advance Scene</button>
             </div>
         </form>
     </main>
 
-    <aside class="detail-column">
-        <section id="right-panel" class="panel detail-panel">
+    <aside class="director-panel-shell">
+        <section id="right-panel" class="director-panel">
             {% include "partials/right_panel_v2.html" %}
         </section>
     </aside>
 </div>
 <section id="modal-panel" class="modal-shell"></section>
+<aside class="diagnostics-drawer" id="diagnostics-drawer" hidden>
+    <div class="diagnostics-card">
+        <div class="drawer-header">
+            <div>
+                <p class="eyebrow">Runtime Console</p>
+                <h3>Local Engine State</h3>
+            </div>
+            <button class="ghost-button compact" type="button" onclick="window.toggleDiagnosticsDrawer(false)">Close</button>
+        </div>
+        <div class="diagnostics-grid">
+            <article>
+                <span>RAM</span>
+                <strong id="diag-ram">--</strong>
+            </article>
+            <article>
+                <span>VRAM</span>
+                <strong id="diag-vram">--</strong>
+            </article>
+            <article>
+                <span>Text</span>
+                <strong id="diag-text">--</strong>
+            </article>
+            <article>
+                <span>Image</span>
+                <strong id="diag-image">--</strong>
+            </article>
+        </div>
+        <pre id="diagnostics-json" class="diagnostics-json">Open to fetch diagnostics.</pre>
+        <div class="diagnostics-actions">
+            <button class="micro-button" type="button" onclick="window.refreshDiagnostics()">Refresh</button>
+            <a class="micro-button export-link" href="/diagnostics" target="_blank" rel="noreferrer">Open JSON</a>
+        </div>
+    </div>
+</aside>
 {% endblock %}

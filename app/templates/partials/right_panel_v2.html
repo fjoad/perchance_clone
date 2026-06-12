@@ -1,10 +1,10 @@
-<div class="panel-header compact">
+<div class="panel-header compact profile-header">
     <div>
-        <p class="eyebrow">Companion Profile</p>
+        <p class="eyebrow">Director Notes</p>
         <h3>{{ active_character.display_name }}</h3>
     </div>
     <button
-        class="ghost-button"
+        class="ghost-button compact"
         hx-get="/characters/{{ active_character.id }}/edit-form"
         hx-target="#modal-panel"
         hx-swap="innerHTML"
@@ -20,8 +20,8 @@
 <div class="banner error">{{ error_message }}</div>
 {% endif %}
 
-<div class="info-card">
-    <h4>User Profile</h4>
+<div class="info-card profile-card">
+    <h4>Your Role</h4>
     <form
         class="stack-form compact-stack"
         hx-post="/user-profile"
@@ -41,37 +41,188 @@
     </form>
 </div>
 
-<div class="info-card">
-    <h4>Persona</h4>
-    <p>{{ active_character.persona_summary }}</p>
+<div class="info-card scene-state-card">
+    <h4>Current Scene State</h4>
+    <form
+        class="stack-form compact-stack"
+        hx-post="/conversation-state"
+        hx-target="#right-panel"
+        hx-swap="innerHTML"
+    >
+        <input type="hidden" name="character_id" value="{{ active_character.id }}">
+        <label>
+            <span>Location name</span>
+            <input
+                type="text"
+                name="current_location_name"
+                value="{{ conversation_state.current_location_name }}"
+                placeholder="Tea room, guild hall, moonlit garden..."
+            >
+        </label>
+        <label>
+            <span>Location details</span>
+            <textarea
+                name="current_location_description"
+                rows="4"
+                placeholder="Stable environmental details the model should preserve."
+            >{{ conversation_state.current_location_description }}</textarea>
+        </label>
+        <label>
+            <span>Active characters</span>
+            <input
+                type="text"
+                name="active_characters"
+                value="{{ active_characters_text }}"
+                placeholder="{{ active_character.display_name }}, Anon"
+            >
+        </label>
+        <button class="primary-button compact" type="submit">Save Scene State</button>
+    </form>
+</div>
+
+<div class="info-card location-card">
+    <h4>Known Locations</h4>
+    <form
+        class="stack-form compact-stack"
+        hx-post="/locations"
+        hx-target="#right-panel"
+        hx-swap="innerHTML"
+    >
+        <input type="hidden" name="character_id" value="{{ active_character.id }}">
+        <label>
+            <span>Name</span>
+            <input type="text" name="name" value="{{ conversation_state.current_location_name }}" placeholder="Candlelit tea room">
+        </label>
+        <label>
+            <span>Description</span>
+            <textarea name="description" rows="3" placeholder="Reusable environmental details.">{{ conversation_state.current_location_description }}</textarea>
+        </label>
+        <label>
+            <span>Visual anchor</span>
+            <textarea name="visual_anchor" rows="2" placeholder="Optional camera, lighting, recurring props."></textarea>
+        </label>
+        <button class="primary-button compact" type="submit">Save Location</button>
+    </form>
+    {% if scene_locations %}
+    <div class="location-list">
+        {% for location in scene_locations[:6] %}
+        <article class="location-chip">
+            <div>
+                <strong>{{ location.name }}</strong>
+                <p>{{ location.description or location.visual_anchor or "No details yet." }}</p>
+            </div>
+            <form
+                hx-post="/locations/{{ location.id }}/use"
+                hx-target="#right-panel"
+                hx-swap="innerHTML"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <input type="hidden" name="active_characters" value="{{ active_characters_text or active_character.display_name ~ ', Anon' }}">
+                <button class="micro-button" type="submit">Use</button>
+            </form>
+            <form
+                hx-post="/locations/{{ location.id }}/delete"
+                hx-target="#right-panel"
+                hx-swap="innerHTML"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <button class="micro-button danger" type="submit">Delete</button>
+            </form>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No saved locations yet. Save the current scene when a place becomes recurring.</p>
+    {% endif %}
+</div>
+
+<div class="info-card dossier-card">
+    <h4>Character Signal</h4>
+    <p>{{ active_character.persona_summary or "No short persona summary yet." }}</p>
     {% if active_character.source_media %}
-    <h4>Source media</h4>
+    <h4>Canon Anchor</h4>
     <p>{{ active_character.source_media }}</p>
     {% endif %}
-    <h4>Appearance</h4>
-    <p>{{ active_character.appearance }}</p>
-    <h4>Pinned memory</h4>
-    <p>{{ pinned_memory or "No pinned memory yet." }}</p>
-    <h4>Lorebook</h4>
-    <p>{{ lore_entries|length }} {% if lore_entries|length == 1 %}entry{% else %}entries{% endif %} available for retrieval.</p>
     {% if active_character.image_anchor_summary %}
-    <h4>Image anchor</h4>
+    <h4>Visual Anchor</h4>
     <p>{{ active_character.image_anchor_summary }}</p>
+    {% else %}
+    <h4>Appearance</h4>
+    <p>{{ active_character.appearance or "No visual anchor yet." }}</p>
+    {% endif %}
+    <h4>Pinned Memory</h4>
+    <p>{{ pinned_memory or "No pinned memory yet." }}</p>
+</div>
+
+<div class="info-card memory-card">
+    <h4>Story Memory</h4>
+    {% if story_summaries %}
+    <p>The latest rolling summary is sent back to the model for long-story continuity. You can edit it if the story drifts.</p>
+    {% set summary = story_summaries[0] %}
+    <form
+        class="stack-form compact-stack"
+        hx-post="/summaries/{{ summary.id }}"
+        hx-target="#right-panel"
+        hx-swap="innerHTML"
+    >
+        <input type="hidden" name="character_id" value="{{ active_character.id }}">
+        <label>
+            <span>Latest summary{% if summary.is_stale %} (stale){% endif %}</span>
+            <textarea name="content" rows="7">{{ summary.content }}</textarea>
+        </label>
+        <button class="primary-button compact" type="submit">Save Memory</button>
+    </form>
+    {% if story_summaries|length > 1 %}
+    <details class="memory-history">
+        <summary>{{ story_summaries|length - 1 }} older summaries</summary>
+        <div class="memory-history-list">
+            {% for old_summary in story_summaries[1:4] %}
+            <p>{{ old_summary.content }}</p>
+            {% endfor %}
+        </div>
+    </details>
+    {% endif %}
+    {% else %}
+    <p>No rolling story summary yet. One will be generated after enough scene beats, or after regeneration marks memory stale.</p>
     {% endif %}
 </div>
 
 {% if active_character.character_dossier %}
 <details class="info-card expandable-card">
-    <summary>Full Character Dossier</summary>
+    <summary>Full Character Card</summary>
     <div class="longform-copy">{{ active_character.character_dossier }}</div>
 </details>
 {% endif %}
 
 <div class="info-card story-guide">
-    <h4>Story Flow</h4>
-    <p>Each {{ active_character.display_name }} response is its own scene beat. Generate visuals from the exact beat you want instead of from one global image panel.</p>
-    <h4>Image preset</h4>
-    <p>{{ image_cfg.base_width }} -> {{ image_cfg.target_width }}, latent hires, DPM++ 2M, denoise {{ image_cfg.denoise_strength }}</p>
-    <h4>Current controls</h4>
-    <p>Use the action row under each {{ active_character.display_name }} block to generate an image, regenerate the latest reply, or delete a block.</p>
+    <h4>Runtime</h4>
+    <p>Text appears first. If enabled, the image render continues in the background and drops into the scene when finished.</p>
+    <h4>Current Image Preset</h4>
+    <p>
+        A1111 {{ image_cfg.base_width }} -> {{ image_cfg.target_width }},
+        {{ image_cfg.steps }} + {{ image_cfg.hires_steps }} steps,
+        {{ image_cfg.sampler_name }}, denoise {{ image_cfg.denoise_strength }}
+    </p>
+    <h4>Lorebook</h4>
+    <p>{{ lore_entries|length }} {% if lore_entries|length == 1 %}entry{% else %}entries{% endif %} available for retrieval.</p>
+    <h4>Story Export</h4>
+    <p>Download the current structured story state: messages, frames, summaries, images, character, user profile, and lore.</p>
+    <a class="micro-button export-link" href="/stories/{{ active_character.id }}/export" target="_blank" rel="noreferrer">
+        Export JSON
+    </a>
+    <details class="import-story-box">
+        <summary>Import Story JSON</summary>
+        <form
+            class="stack-form compact-stack"
+            action="/stories/import"
+            method="post"
+        >
+            <input type="hidden" name="character_id" value="{{ active_character.id }}">
+            <label>
+                <span>Paste exported story JSON</span>
+                <textarea name="story_json" rows="6" placeholder="{ &quot;export_version&quot;: 1, ... }"></textarea>
+            </label>
+            <button class="primary-button compact" type="submit">Import Copy</button>
+        </form>
+    </details>
 </div>

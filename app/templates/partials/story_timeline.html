@@ -6,18 +6,104 @@
 {% endif %}
 
 {% if messages %}
-<div class="story-feed">
+<div class="story-feed scene-feed">
     {% for message in messages %}
-    <article class="story-block {% if message.role == 'user' %}user{% elif message.role == 'assistant' %}assistant{% else %}system{% endif %}">
+    <article class="story-block scene-beat {% if message.role == 'user' %}user{% elif message.role == 'assistant' %}assistant{% else %}system{% endif %}">
         <div class="message-meta">
-            {% if message.role == 'user' %}
-            You
-            {% elif message.role == 'assistant' %}
-            {{ active_character.display_name }}
-            {% else %}
-            System
-            {% endif %}
+            <span class="beat-index">Beat {{ loop.index }}</span>
+            <span class="speaker-name">
+                {% if message.role == 'user' %}
+                You
+                {% elif message.role == 'assistant' %}
+                {{ active_character.display_name }}
+                {% else %}
+                System
+                {% endif %}
+            </span>
         </div>
+
+        {% if message.role == 'assistant' %}
+        {% set frame = frames_by_message.get(message.id) %}
+        {% if frame %}
+        <div class="frame-meta">
+            <span>Frame {{ frame.frame_index }}</span>
+            {% if frame.text_elapsed_s %}
+            <span>Text {{ "%.1f"|format(frame.text_elapsed_s) }}s</span>
+            {% endif %}
+            {% if frame.image_elapsed_s %}
+            <span>Image {{ "%.1f"|format(frame.image_elapsed_s) }}s</span>
+            {% endif %}
+            {% if frame.location_name %}
+            <span>{{ frame.location_name }}</span>
+            {% endif %}
+            <span>{{ frame.status.replace("_", " ") }}</span>
+        </div>
+        {% if frame.error %}
+        <div class="frame-error">
+            {{ frame.error }}
+        </div>
+        {% endif %}
+        {% endif %}
+        {% endif %}
+
+        {% if message.role == 'assistant' %}
+        {% set message_images = images_by_message.get(message.id, []) %}
+        {% if message_images %}
+        <div class="inline-visual-stack">
+            {% for image in message_images %}
+            <section class="scene-visual">
+                <div class="message-meta">
+                    <span class="beat-index">Visual {{ loop.index }}</span>
+                    <span class="speaker-name">Rendered Scene</span>
+                </div>
+                <div class="visual-media">
+                    <img src="{{ image.media_url }}" alt="Generated scene image for this response">
+                </div>
+                <div class="image-meta">
+                    <div><strong>Scene:</strong> {{ image.scene_summary }}</div>
+                    <div>
+                        <strong>Preset:</strong>
+                        {{ image.base_width }} to {{ image.target_width }},
+                        denoise {{ image.denoise_strength }},
+                        seed {{ image.seed }}
+                    </div>
+                </div>
+                <div class="message-actions">
+                    <form
+                        hx-post="/images/{{ image.id }}/regenerate"
+                        hx-target="#timeline"
+                        hx-swap="innerHTML"
+                        data-action="image-regenerate"
+                        data-image-id="{{ image.id }}"
+                    >
+                        <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                        <button class="micro-button" type="submit">Regenerate Image</button>
+                    </form>
+                    <form
+                        hx-post="/images/{{ image.id }}/delete"
+                        hx-target="#timeline"
+                        hx-swap="innerHTML"
+                        data-action="image-delete"
+                        data-image-id="{{ image.id }}"
+                    >
+                        <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                        <button class="micro-button danger" type="submit">Delete Image</button>
+                    </form>
+                </div>
+                <div
+                    class="message-progress image-progress"
+                    data-image-id="{{ image.id }}"
+                    hidden
+                >
+                    <div class="message-progress-label">Regenerating image...</div>
+                    <div class="message-progress-bar"><span></span></div>
+                </div>
+            </section>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endif %}
+
         <div
             class="message-body"
             data-role="{{ message.role }}"
@@ -26,12 +112,25 @@
 
         {% if message.role == 'assistant' %}
         <div class="message-actions">
+            {% if frame and frame.error %}
+            <form
+                hx-post="/messages/{{ message.id }}/image"
+                hx-target="#timeline"
+                hx-swap="innerHTML"
+                data-action="image"
+                data-message-id="{{ message.id }}"
+            >
+                <input type="hidden" name="character_id" value="{{ active_character.id }}">
+                <button class="micro-button" type="submit">Retry Visual</button>
+            </form>
+            {% endif %}
+
             <button
                 class="micro-button"
                 type="button"
                 onclick="window.toggleInlineComposer('image-tools-{{ message.id }}')"
             >
-                Generate Image
+                Visualize Beat
             </button>
 
             {% if message.id == latest_assistant_id %}
@@ -87,22 +186,31 @@
                 </label>
                 <div class="inline-image-footer">
                     <div class="inline-image-controls">
-                        <label class="inline-select">
-                            <span>Resolution preset</span>
-                            <select name="resolution_preset">
+                        <fieldset class="preset-picker compact-preset-picker" aria-label="Image preset">
+                            <legend>Resolution preset</legend>
+                            <div class="preset-options">
                                 {% for option in resolution_options %}
-                                <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>
-                                    {{ option.label }}
-                                </option>
+                                <label class="preset-option">
+                                    <input
+                                        type="radio"
+                                        name="resolution_preset"
+                                        value="{{ option.value }}"
+                                        {% if option.selected %}checked{% endif %}
+                                    >
+                                    <span>
+                                        <strong>{{ option.name }}</strong>
+                                        <small>{{ option.description }}</small>
+                                    </span>
+                                </label>
                                 {% endfor %}
-                            </select>
-                        </label>
+                            </div>
+                        </fieldset>
                     </div>
                     <div class="inline-metadata">
-                        <span>2-stage SDXL</span>
-                        <span>latent hires flow</span>
+                        <span>A1111 SDXL</span>
+                        <span>{{ image_cfg.steps }} + {{ image_cfg.hires_steps }} steps</span>
                     </div>
-                    <button class="primary-button compact" type="submit">Generate</button>
+                    <button class="primary-button compact" type="submit">Render Visual</button>
                 </div>
             </form>
         </div>
@@ -123,61 +231,12 @@
         </div>
         {% endif %}
     </article>
-
-    {% if message.role == 'assistant' %}
-    {% set message_images = images_by_message.get(message.id, []) %}
-    {% for image in message_images %}
-    <article class="story-block assistant visual-block image-block">
-        <div class="message-meta">Visual</div>
-        <div class="visual-media">
-            <img src="{{ image.media_url }}" alt="Generated scene image for this response">
-        </div>
-        <div class="image-meta">
-            <div><strong>Scene:</strong> {{ image.scene_summary }}</div>
-            <div>
-                <strong>Preset:</strong>
-                {{ image.base_width }} -> {{ image.target_width }},
-                denoise {{ image.denoise_strength }},
-                seed {{ image.seed }}
-            </div>
-        </div>
-        <div class="message-actions">
-            <form
-                hx-post="/images/{{ image.id }}/regenerate"
-                hx-target="#timeline"
-                hx-swap="innerHTML"
-                data-action="image-regenerate"
-                data-image-id="{{ image.id }}"
-            >
-                <input type="hidden" name="character_id" value="{{ active_character.id }}">
-                <button class="micro-button" type="submit">Regenerate Image</button>
-            </form>
-            <form
-                hx-post="/images/{{ image.id }}/delete"
-                hx-target="#timeline"
-                hx-swap="innerHTML"
-                data-action="image-delete"
-                data-image-id="{{ image.id }}"
-            >
-                <input type="hidden" name="character_id" value="{{ active_character.id }}">
-                <button class="micro-button danger" type="submit">Delete Image</button>
-            </form>
-        </div>
-        <div
-            class="message-progress image-progress"
-            data-image-id="{{ image.id }}"
-            hidden
-        >
-            <div class="message-progress-label">Regenerating image...</div>
-            <div class="message-progress-bar"><span></span></div>
-        </div>
-    </article>
-    {% endfor %}
-    {% endif %}
     {% endfor %}
 </div>
 {% else %}
-<div class="empty-state">
-    <p>No scene yet. Start the first beat of the story.</p>
+<div class="empty-state scene-empty">
+    <p class="eyebrow">Blank Page</p>
+    <h3>Start the first beat.</h3>
+    <p>Write a line, action, or choice below. The story engine will answer first; visuals can render after the reply.</p>
 </div>
 {% endif %}

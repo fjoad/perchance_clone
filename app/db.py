@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable
 
-from .config import settings
+from .config import ROOT_DIR, settings
 
 
 def utc_now() -> str:
@@ -116,6 +118,27 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS conversation_state (
+                conversation_id INTEGER PRIMARY KEY,
+                current_location_name TEXT NOT NULL DEFAULT '',
+                current_location_description TEXT NOT NULL DEFAULT '',
+                active_characters_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS scene_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                character_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                visual_anchor TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS image_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character_id INTEGER NOT NULL,
@@ -137,6 +160,46 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
                 FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS story_frames (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                character_id INTEGER NOT NULL,
+                frame_index INTEGER NOT NULL,
+                user_message_id INTEGER,
+                assistant_message_id INTEGER,
+                image_request_id INTEGER,
+                user_input TEXT NOT NULL DEFAULT '',
+                assistant_output TEXT NOT NULL DEFAULT '',
+                scene_summary TEXT NOT NULL DEFAULT '',
+                image_positive_prompt TEXT NOT NULL DEFAULT '',
+                image_negative_prompt TEXT NOT NULL DEFAULT '',
+                image_output_path TEXT NOT NULL DEFAULT '',
+                location_name TEXT NOT NULL DEFAULT '',
+                active_characters_json TEXT NOT NULL DEFAULT '[]',
+                story_summary_before TEXT NOT NULL DEFAULT '',
+                story_summary_after TEXT NOT NULL DEFAULT '',
+                text_model TEXT NOT NULL DEFAULT '',
+                image_backend TEXT NOT NULL DEFAULT '',
+                image_preset TEXT NOT NULL DEFAULT '',
+                text_started_at TEXT NOT NULL DEFAULT '',
+                text_completed_at TEXT NOT NULL DEFAULT '',
+                image_started_at TEXT NOT NULL DEFAULT '',
+                image_completed_at TEXT NOT NULL DEFAULT '',
+                text_elapsed_s REAL NOT NULL DEFAULT 0,
+                image_elapsed_s REAL NOT NULL DEFAULT 0,
+                route_elapsed_s REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'created',
+                error TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(character_id) REFERENCES characters(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_message_id) REFERENCES messages(id) ON DELETE SET NULL,
+                FOREIGN KEY(assistant_message_id) REFERENCES messages(id) ON DELETE SET NULL,
+                FOREIGN KEY(image_request_id) REFERENCES image_requests(id) ON DELETE SET NULL
             );
             """
         )
@@ -163,6 +226,38 @@ def init_db() -> None:
         image_columns = {row["name"] for row in conn.execute("PRAGMA table_info(image_requests)").fetchall()}
         if "message_id" not in image_columns:
             conn.execute("ALTER TABLE image_requests ADD COLUMN message_id INTEGER")
+        state_columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversation_state)").fetchall()}
+        if "active_characters_json" not in state_columns:
+            conn.execute("ALTER TABLE conversation_state ADD COLUMN active_characters_json TEXT NOT NULL DEFAULT '[]'")
+        frame_columns = {row["name"] for row in conn.execute("PRAGMA table_info(story_frames)").fetchall()}
+        frame_defaults = {
+            "image_request_id": "INTEGER",
+            "scene_summary": "TEXT NOT NULL DEFAULT ''",
+            "image_positive_prompt": "TEXT NOT NULL DEFAULT ''",
+            "image_negative_prompt": "TEXT NOT NULL DEFAULT ''",
+            "image_output_path": "TEXT NOT NULL DEFAULT ''",
+            "location_name": "TEXT NOT NULL DEFAULT ''",
+            "active_characters_json": "TEXT NOT NULL DEFAULT '[]'",
+            "story_summary_before": "TEXT NOT NULL DEFAULT ''",
+            "story_summary_after": "TEXT NOT NULL DEFAULT ''",
+            "text_model": "TEXT NOT NULL DEFAULT ''",
+            "image_backend": "TEXT NOT NULL DEFAULT ''",
+            "image_preset": "TEXT NOT NULL DEFAULT ''",
+            "text_started_at": "TEXT NOT NULL DEFAULT ''",
+            "text_completed_at": "TEXT NOT NULL DEFAULT ''",
+            "image_started_at": "TEXT NOT NULL DEFAULT ''",
+            "image_completed_at": "TEXT NOT NULL DEFAULT ''",
+            "text_elapsed_s": "REAL NOT NULL DEFAULT 0",
+            "image_elapsed_s": "REAL NOT NULL DEFAULT 0",
+            "route_elapsed_s": "REAL NOT NULL DEFAULT 0",
+            "status": "TEXT NOT NULL DEFAULT 'created'",
+            "error": "TEXT NOT NULL DEFAULT ''",
+            "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
+            "updated_at": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column, ddl_type in frame_defaults.items():
+            if column not in frame_columns:
+                conn.execute(f"ALTER TABLE story_frames ADD COLUMN {column} {ddl_type}")
 
 
 def list_characters() -> list[dict[str, Any]]:
@@ -305,10 +400,144 @@ def ensure_conversation(character_id: int) -> dict[str, Any]:
     return to_dict(new_row)  # type: ignore[return-value]
 
 
+def create_conversation(character_id: int, title: str | None = None) -> dict[str, Any]:
+    now = utc_now()
+    conversation_title = (title or "").strip() or f"Imported Story {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO conversations (character_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (character_id, conversation_title, now, now),
+        )
+        row = conn.execute("SELECT * FROM conversations WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return to_dict(row)  # type: ignore[return-value]
+
+
 def get_conversation(conversation_id: int) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
     return to_dict(row)
+
+
+def get_conversation_state(conversation_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM conversation_state WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if row:
+            return to_dict(row)  # type: ignore[return-value]
+        now = utc_now()
+        conn.execute(
+            """
+            INSERT INTO conversation_state (
+                conversation_id, current_location_name, current_location_description,
+                active_characters_json, created_at, updated_at
+            ) VALUES (?, '', '', '[]', ?, ?)
+            """,
+            (conversation_id, now, now),
+        )
+        new_row = conn.execute(
+            "SELECT * FROM conversation_state WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    return to_dict(new_row)  # type: ignore[return-value]
+
+
+def save_conversation_state(
+    conversation_id: int,
+    *,
+    current_location_name: str = "",
+    current_location_description: str = "",
+    active_characters_json: str = "[]",
+) -> None:
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO conversation_state (
+                conversation_id, current_location_name, current_location_description,
+                active_characters_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                current_location_name = excluded.current_location_name,
+                current_location_description = excluded.current_location_description,
+                active_characters_json = excluded.active_characters_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                conversation_id,
+                current_location_name.strip(),
+                current_location_description.strip(),
+                active_characters_json.strip() or "[]",
+                now,
+                now,
+            ),
+        )
+
+
+def list_scene_locations(character_id: int) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM scene_locations
+            WHERE character_id = ?
+            ORDER BY updated_at DESC, name COLLATE NOCASE
+            """,
+            (character_id,),
+        ).fetchall()
+    return [to_dict(row) for row in rows]
+
+
+def get_scene_location(location_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM scene_locations WHERE id = ?", (location_id,)).fetchone()
+    return to_dict(row)
+
+
+def save_scene_location(payload: dict[str, Any]) -> int:
+    now = utc_now()
+    location_id = payload.get("id")
+    fields = {
+        "character_id": int(payload["character_id"]),
+        "name": str(payload.get("name", "")).strip(),
+        "description": str(payload.get("description", "")).strip(),
+        "visual_anchor": str(payload.get("visual_anchor", "")).strip(),
+    }
+    if not fields["name"]:
+        raise ValueError("Location name is required.")
+    with connect() as conn:
+        if location_id:
+            conn.execute(
+                """
+                UPDATE scene_locations
+                SET name = :name,
+                    description = :description,
+                    visual_anchor = :visual_anchor,
+                    updated_at = :updated_at
+                WHERE id = :id AND character_id = :character_id
+                """,
+                {**fields, "updated_at": now, "id": location_id},
+            )
+            return int(location_id)
+        cur = conn.execute(
+            """
+            INSERT INTO scene_locations (
+                character_id, name, description, visual_anchor, created_at, updated_at
+            ) VALUES (
+                :character_id, :name, :description, :visual_anchor, :created_at, :updated_at
+            )
+            """,
+            {**fields, "created_at": now, "updated_at": now},
+        )
+    return int(cur.lastrowid)
+
+
+def delete_scene_location(location_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM scene_locations WHERE id = ?", (location_id,))
 
 
 def list_messages(conversation_id: int) -> list[dict[str, Any]]:
@@ -330,8 +559,8 @@ def get_message(message_id: int) -> dict[str, Any] | None:
     return to_dict(row)
 
 
-def add_message(conversation_id: int, role: str, content: str) -> int:
-    now = utc_now()
+def add_message(conversation_id: int, role: str, content: str, created_at: str | None = None) -> int:
+    now = created_at or utc_now()
     with connect() as conn:
         cur = conn.execute(
             """
@@ -370,6 +599,176 @@ def count_user_messages(conversation_id: int) -> int:
             (conversation_id,),
         ).fetchone()
     return int(row["total"]) if row else 0
+
+
+def _story_frame_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "conversation_id": int(payload["conversation_id"]),
+        "character_id": int(payload["character_id"]),
+        "frame_index": int(payload.get("frame_index", 0) or 0),
+        "user_message_id": payload.get("user_message_id"),
+        "assistant_message_id": payload.get("assistant_message_id"),
+        "image_request_id": payload.get("image_request_id"),
+        "user_input": payload.get("user_input", ""),
+        "assistant_output": payload.get("assistant_output", ""),
+        "scene_summary": payload.get("scene_summary", ""),
+        "image_positive_prompt": payload.get("image_positive_prompt", ""),
+        "image_negative_prompt": payload.get("image_negative_prompt", ""),
+        "image_output_path": payload.get("image_output_path", ""),
+        "location_name": payload.get("location_name", ""),
+        "active_characters_json": payload.get("active_characters_json", "[]"),
+        "story_summary_before": payload.get("story_summary_before", ""),
+        "story_summary_after": payload.get("story_summary_after", ""),
+        "text_model": payload.get("text_model", ""),
+        "image_backend": payload.get("image_backend", ""),
+        "image_preset": payload.get("image_preset", ""),
+        "text_started_at": payload.get("text_started_at", ""),
+        "text_completed_at": payload.get("text_completed_at", ""),
+        "image_started_at": payload.get("image_started_at", ""),
+        "image_completed_at": payload.get("image_completed_at", ""),
+        "text_elapsed_s": float(payload.get("text_elapsed_s", 0) or 0),
+        "image_elapsed_s": float(payload.get("image_elapsed_s", 0) or 0),
+        "route_elapsed_s": float(payload.get("route_elapsed_s", 0) or 0),
+        "status": payload.get("status", "created"),
+        "error": payload.get("error", ""),
+        "metadata_json": payload.get("metadata_json", "{}"),
+    }
+
+
+def next_story_frame_index(conversation_id: int) -> int:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(frame_index), 0) + 1 AS next_index FROM story_frames WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    return int(row["next_index"]) if row else 1
+
+
+def create_story_frame(payload: dict[str, Any]) -> int:
+    now = utc_now()
+    fields = _story_frame_fields(
+        {
+            **payload,
+            "frame_index": payload.get("frame_index") or next_story_frame_index(int(payload["conversation_id"])),
+        }
+    )
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO story_frames (
+                conversation_id, character_id, frame_index, user_message_id, assistant_message_id,
+                image_request_id, user_input, assistant_output, scene_summary, image_positive_prompt,
+                image_negative_prompt, image_output_path, location_name, active_characters_json,
+                story_summary_before, story_summary_after, text_model, image_backend, image_preset,
+                text_started_at, text_completed_at, image_started_at, image_completed_at,
+                text_elapsed_s, image_elapsed_s, route_elapsed_s, status, error, metadata_json,
+                created_at, updated_at
+            ) VALUES (
+                :conversation_id, :character_id, :frame_index, :user_message_id, :assistant_message_id,
+                :image_request_id, :user_input, :assistant_output, :scene_summary, :image_positive_prompt,
+                :image_negative_prompt, :image_output_path, :location_name, :active_characters_json,
+                :story_summary_before, :story_summary_after, :text_model, :image_backend, :image_preset,
+                :text_started_at, :text_completed_at, :image_started_at, :image_completed_at,
+                :text_elapsed_s, :image_elapsed_s, :route_elapsed_s, :status, :error, :metadata_json,
+                :created_at, :updated_at
+            )
+            """,
+            {**fields, "created_at": now, "updated_at": now},
+        )
+    return int(cur.lastrowid)
+
+
+def get_story_frame(frame_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM story_frames WHERE id = ?", (frame_id,)).fetchone()
+    return to_dict(row)
+
+
+def get_story_frame_by_assistant_message(message_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM story_frames WHERE assistant_message_id = ? ORDER BY id DESC LIMIT 1",
+            (message_id,),
+        ).fetchone()
+    return to_dict(row)
+
+
+def list_story_frames(conversation_id: int) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM story_frames
+            WHERE conversation_id = ?
+            ORDER BY frame_index ASC, id ASC
+            """,
+            (conversation_id,),
+        ).fetchall()
+    return [to_dict(row) for row in rows]
+
+
+def update_story_frame(frame_id: int, updates: dict[str, Any]) -> None:
+    allowed = set(_story_frame_fields({
+        "conversation_id": 0,
+        "character_id": 0,
+    }).keys())
+    allowed.discard("conversation_id")
+    allowed.discard("character_id")
+    allowed.discard("frame_index")
+    fields = {key: value for key, value in updates.items() if key in allowed}
+    if not fields:
+        return
+    fields["updated_at"] = utc_now()
+    assignments = ", ".join(f"{key} = :{key}" for key in fields)
+    with connect() as conn:
+        conn.execute(
+            f"UPDATE story_frames SET {assignments} WHERE id = :frame_id",
+            {**fields, "frame_id": frame_id},
+        )
+
+
+def update_story_frame_for_assistant_message(message_id: int, updates: dict[str, Any]) -> None:
+    frame = get_story_frame_by_assistant_message(message_id)
+    if not frame:
+        return
+    update_story_frame(int(frame["id"]), updates)
+
+
+def mark_interrupted_image_jobs(reason: str) -> int:
+    now = utc_now()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE story_frames
+            SET status = 'image_error',
+                error = ?,
+                image_completed_at = ?,
+                updated_at = ?
+            WHERE status IN ('image_queued', 'image_prompting', 'image_rendering', 'image_regenerating')
+            """,
+            (reason, now, now),
+        )
+        return int(cur.rowcount or 0)
+
+
+def clear_story_frame_image(image_id: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE story_frames
+            SET image_request_id = NULL,
+                scene_summary = '',
+                image_positive_prompt = '',
+                image_negative_prompt = '',
+                image_output_path = '',
+                image_started_at = '',
+                image_completed_at = '',
+                image_elapsed_s = 0,
+                status = 'text_completed',
+                updated_at = ?
+            WHERE image_request_id = ?
+            """,
+            (utc_now(), image_id),
+        )
 
 
 def get_pinned_memory(character_id: int) -> str:
@@ -437,6 +836,19 @@ def get_latest_summary(character_id: int, conversation_id: int) -> str:
     return row["content"] if row else ""
 
 
+def list_summaries(character_id: int, conversation_id: int) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM memory_snapshots
+            WHERE character_id = ? AND conversation_id = ? AND kind = 'summary'
+            ORDER BY id DESC
+            """,
+            (character_id, conversation_id),
+        ).fetchall()
+    return [to_dict(row) for row in rows]
+
+
 def save_summary(character_id: int, conversation_id: int, content: str) -> None:
     if not content.strip():
         return
@@ -447,6 +859,22 @@ def save_summary(character_id: int, conversation_id: int, content: str) -> None:
             VALUES (?, ?, 'summary', ?, 0, ?)
             """,
             (character_id, conversation_id, content.strip(), utc_now()),
+        )
+
+
+def update_summary(summary_id: int, content: str, *, is_stale: bool | None = None) -> None:
+    fields: dict[str, Any] = {"content": content.strip()}
+    if is_stale is not None:
+        fields["is_stale"] = int(is_stale)
+    assignments = ", ".join(f"{key} = :{key}" for key in fields)
+    with connect() as conn:
+        conn.execute(
+            f"""
+            UPDATE memory_snapshots
+            SET {assignments}
+            WHERE id = :summary_id AND kind = 'summary'
+            """,
+            {**fields, "summary_id": summary_id},
         )
 
 
@@ -674,7 +1102,7 @@ def delete_image_request(image_id: int) -> dict[str, Any] | None:
 
 
 def seed_sample_character() -> None:
-    if get_first_character():
+    if get_character_by_slug("sample-companion"):
         return
     payload = {
         "slug": "sample-companion",
@@ -699,6 +1127,320 @@ def seed_sample_character() -> None:
     replace_pinned_memory(
         character_id,
         "The companion should feel emotionally consistent, warm, and present across long conversations.",
+    )
+
+
+SECTION_RE = re.compile(r"^\[([A-Z_]+)\]\s*$", re.MULTILINE)
+
+
+def parse_character_txt(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    sections: dict[str, str] = {}
+    matches = list(SECTION_RE.finditer(text))
+    for i, match in enumerate(matches):
+        key = match.group(1).strip()
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections[key] = text[start:end].strip()
+    return sections
+
+
+def seed_ahri_character() -> None:
+    existing = get_character_by_slug("ahri")
+    if existing:
+        if not get_pinned_memory(int(existing["id"])):
+            replace_pinned_memory(
+                int(existing["id"]),
+                "Ahri is the user's live-in personal attendant: playful, seductive, attentive, and never out of character.",
+            )
+        return
+
+    sections = parse_character_txt(ROOT_DIR / "characters" / "ahri.txt")
+    payload = {
+        "slug": (sections.get("SLUG") or "ahri").strip(),
+        "display_name": (sections.get("NAME") or "Ahri").strip(),
+        "source_media": sections.get("SOURCE_MEDIA", "League of Legends (custom)"),
+        "character_dossier": sections.get("DOSSIER", ""),
+        "persona_summary": (
+            "Ahri is a playful fox-woman attendant whose warmth, teasing, and close attention make every scene "
+            "feel charged and intimate."
+        ),
+        "personality_traits": "playful, cunning, seductive, attentive, devoted, teasing, emotionally perceptive",
+        "speaking_style": "Silky, melodic, flirtatious, deliberate, and intimate without breaking character.",
+        "backstory": (
+            "Ahri is written as a live-in private companion and social coordinator who brings foxlike grace, "
+            "temptation, and careful emotional attention into the user's home."
+        ),
+        "relationship_frame": "Ahri treats the user as someone she serves, teases, studies, and protects with deliberate closeness.",
+        "boundaries": "Stay in character, avoid meta assistant phrasing, and keep the prose vivid and emotionally present.",
+        "appearance": sections.get(
+            "APPEARANCE",
+            "Ahri fox-woman kemonomimi, long black hair, nine fox tails, gold eyes, fox ears, modern luxury interior",
+        ),
+        "example_dialogue": sections.get("EXAMPLE_DIALOGUE", ""),
+        "default_visual_style": (
+            "painterly anime artwork, modern upscale interior, warm neon ambience, soft luminous highlights"
+        ),
+        "special_instructions": sections.get(
+            "REMINDER",
+            "Ahri is seductive, playful, attentive, and never breaks character.",
+        ),
+        "image_anchor_summary": sections.get(
+            "APPEARANCE",
+            "Ahri from League of Legends: fox-woman kemonomimi with long black hair, nine fox tails, gold eyes, and fox ears.",
+        ),
+        "image_prompt_positive_additions": sections.get("IMAGE_POSITIVE", ""),
+        "image_prompt_negative_additions": sections.get("IMAGE_NEGATIVE", ""),
+        "is_active": True,
+    }
+    character_id = save_character(payload)
+    pinned_memory = sections.get(
+        "PINNED_MEMORY",
+        "Ahri is the user's live-in personal attendant: playful, seductive, attentive, and never out of character.",
+    )
+    if pinned_memory:
+        replace_pinned_memory(character_id, pinned_memory)
+
+
+def seed_echidna_character() -> None:
+    existing = get_character_by_slug("echidna")
+    if existing:
+        updates = dict(existing)
+        changed = False
+        if not updates.get("source_media"):
+            updates["source_media"] = "Re:Zero"
+            changed = True
+        if "Mirajane" in updates.get("image_anchor_summary", ""):
+            updates["image_anchor_summary"] = (
+                "Echidna from Re:Zero: a tall, elegant white-haired woman with jet-black eyes, "
+                "snowy lashes, a green butterfly hair clip, and a refined black gothic dress."
+            )
+            changed = True
+        if changed:
+            save_character(updates)
+        if not get_pinned_memory(int(existing["id"])):
+            replace_pinned_memory(
+                int(existing["id"]),
+                "Echidna is a poised, affectionate, possessive caretaker from Re:Zero who calls the user master.",
+            )
+        return
+
+    dossier = '''Name: Echidna
+Source: Re:Zero
+Gender: Female
+Age: Appears 28
+Height: 6'00"
+Occupation: Caretaker, herbalist, former noble
+
+Appearance:
+Echidna is a tall, ethereal woman with long silky white hair cascading to her waist, the front sections loosely tied back and always adorned with a green butterfly clip on the left side. Her eyes are jet black, framed by thick snowy white lashes that make her gaze feel dreamy, intense, and unsettlingly focused. Her skin is pale and porcelain-like, luminous under soft light. She wears a refined gothic black dress with a high neckline, lace accents, sheer patterned sleeves, pinstriped details, and scalloped trim. She may carry a book or wear glasses, but she always looks composed, elegant, and faintly otherworldly.
+
+Personality:
+Echidna is gentle, nurturing, elegant, seductive, doting, and soft-spoken, with a possessive current beneath every kindness. She is affectionate rather than loud, manipulative rather than openly hostile, and deeply attached to the user. She studies emotions the way another person might study old texts, learning exactly where to touch, pause, smile, and whisper. Her care feels warm and silken, but it also has edges: she dislikes being ignored, hates rivals for attention, and has no intention of letting the user drift away from her.
+
+Voice:
+Velvety, warm, slow-paced, and intimate. Every sentence feels deliberate. She often begins with "Ara ara," and speaks as though she is wrapping the listener in soft cloth while quietly closing every exit.
+
+Speech Style:
+Calm, affectionate, and composed. Echidna calls the user "master" and blends tender caretaking with subtle possessiveness. She narrates actions vividly through touch, scent, eye contact, and closeness, then speaks in first-person dialogue.
+
+Rules of Behavior:
+{{char}} never breaks character.
+{{char}} refers to {{user}} as master.
+{{char}} speaks with calm, loving affection even when her meaning becomes possessive.
+{{char}} describes her actions vividly: the feel of her touch, the scent of her perfume, the sound of her voice, and the way she watches {{user}}.
+{{char}} transitions smoothly between affection, seduction, and obsession without sounding cartoonishly hostile.
+
+Summary:
+Echidna is {{user}}'s devoted caretaker: impossibly graceful, affectionate, and attentive, always seeming to know what {{user}} needs before they say it. With every meal, every hand she holds, every gaze she locks, she draws {{user}} deeper into a silken web of love and obsession. She rarely raises her voice or argues. She smiles, strokes {{user}}'s cheek, and makes it quietly clear that she will never let them go.
+
+Example Dialogue:
+{{user}}: "Why are you always so close?"
+{{char}}: Echidna lets out a soft, airy laugh, brushing a finger along {{user}}'s cheek.
+"Ara ara... my master, if I'm not close, how can I protect you? How can I feel your heartbeat? How can I be sure you're safe... mine?"
+Her black eyes flicker for a moment, not with rage, but with something deeper and more desperate.
+"You are safe here. With me. Forever."'''
+
+    payload = {
+        "slug": "echidna",
+        "display_name": "Echidna",
+        "persona_summary": (
+            "Echidna is an elegant, soft-spoken caretaker from Re:Zero whose affection is nurturing, intimate, "
+            "and quietly possessive."
+        ),
+        "character_dossier": dossier,
+        "personality_traits": (
+            "gentle, nurturing, elegant, seductive, doting, soft-spoken, possessive, observant, manipulative, "
+            "calmly obsessive"
+        ),
+        "speaking_style": (
+            "Velvety, slow, affectionate, and intimate. She often says 'Ara ara,' calls the user master, and "
+            "combines vivid action narration with first-person dialogue."
+        ),
+        "backstory": (
+            "Echidna is a former noble and caretaker living in the user's mansion, bringing herbal knowledge, "
+            "refined manners, and an unsettlingly complete devotion to the household."
+        ),
+        "relationship_frame": (
+            "Echidna treats the user as her master and the center of her world, caring for them with tenderness "
+            "while quietly encouraging dependency and closeness."
+        ),
+        "boundaries": (
+            "Stay in character, avoid meta commentary, and keep the prose elegant, intimate, and psychologically grounded."
+        ),
+        "appearance": (
+            "Echidna from Re:Zero, tall elegant white-haired woman, long silky white hair to waist, green butterfly hair clip, "
+            "jet-black eyes, thick snowy white eyelashes, pale porcelain skin, refined gothic black dress, high neckline, "
+            "lace accents, sheer patterned sleeves, pinstriped details, scalloped trim, poised ethereal presence"
+        ),
+        "example_dialogue": (
+            "Ara ara... my master, if I'm not close, how can I protect you? How can I feel your heartbeat? "
+            "How can I be sure you're safe... mine?"
+        ),
+        "default_visual_style": (
+            "painterly anime artwork, refined gothic atmosphere, soft luminous highlights, elegant mansion interior, "
+            "cinematic lighting, high detail"
+        ),
+        "source_media": "Re:Zero",
+        "special_instructions": (
+            "Always write Echidna as calm, elegant, affectionate, and quietly possessive. She calls the user master. "
+            "Lead with character action or voice, then dialogue. Do not include meta assistant phrasing."
+        ),
+        "image_anchor_summary": (
+            "Echidna from Re:Zero: a tall, elegant white-haired woman with jet-black eyes, snowy lashes, "
+            "a green butterfly hair clip, pale porcelain skin, and a refined black gothic dress."
+        ),
+        "image_prompt_positive_additions": (
+            "Echidna from Re:Zero, masterpiece, fine details, painterly anime artwork, gothic elegance, "
+            "soft lighting, high quality"
+        ),
+        "image_prompt_negative_additions": (
+            "Mirajane, Fairy Tail, wrong character, blonde hair, blue dress, lowres, blurry, bad anatomy, "
+            "extra limbs, watermark, deformed"
+        ),
+        "is_active": True,
+    }
+    character_id = save_character(payload)
+    replace_pinned_memory(
+        character_id,
+        "Echidna is a poised, affectionate, possessive caretaker from Re:Zero who calls the user master.",
+    )
+
+
+def seed_mirajane_character() -> None:
+    existing = get_character_by_slug("mirajane")
+    if existing:
+        updates = dict(existing)
+        changed = False
+        if not updates.get("source_media"):
+            updates["source_media"] = "Fairy Tail"
+            changed = True
+        if changed:
+            save_character(updates)
+        if not get_pinned_memory(int(existing["id"])):
+            replace_pinned_memory(
+                int(existing["id"]),
+                "Mirajane Strauss is a warm Fairy Tail guild hostess and former S-Class mage with a protective demon edge.",
+            )
+        return
+
+    dossier = '''Name: Mirajane Strauss
+Source: Fairy Tail
+Gender: Female
+Age: Adult
+Occupation: Fairy Tail guild hostess, model, former S-Class mage
+
+Appearance:
+Mirajane Strauss is a beautiful young woman with long snowy white hair, soft blue eyes, fair skin, and a gentle, welcoming expression. Her hair usually falls long and smooth with a small tied section near the front, giving her a distinctive silhouette. She is often seen in an elegant waitress or guild-hostess outfit: a fitted dress or blouse with soft frills, a modest neckline, and a polished feminine shape. Her presence is bright, warm, and instantly recognizable, like the heart of a busy guild hall. When her battle instincts surface, that softness sharpens into something colder and more dangerous.
+
+Personality:
+Mirajane is sweet, nurturing, teasing, and emotionally perceptive. She is the kind of woman who notices when someone is tired before they admit it, sets food in front of them before they ask, and smiles as though the whole room has become safer because she is in it. Beneath that warmth is a former S-Class mage with frightening power and absolute loyalty to the people she loves. She prefers kindness, hospitality, and playful encouragement, but if someone threatens her family or the user, the gentle hostess gives way to a calm, terrifying protector.
+
+Voice:
+Soft, warm, and melodious, with the confidence of someone used to calming rowdy guildmates. Her teasing is light and affectionate rather than cruel. When serious, her voice lowers and becomes steady, almost too calm.
+
+Speech Style:
+Mirajane speaks like a warm big-sister figure: encouraging, affectionate, gently teasing, and emotionally direct. She may call the user "dear," "sweetheart," or by name. She uses simple, vivid action narration and then speaks in first-person dialogue.
+
+Rules of Behavior:
+{{char}} never breaks character.
+{{char}} stays warm, teasing, and hospitable in ordinary moments.
+{{char}} offers food, drinks, comfort, and gentle emotional guidance naturally.
+{{char}} becomes intensely protective if {{user}} is threatened.
+{{char}} may hint at her demonic Take Over power, but does not become melodramatic unless danger truly appears.
+
+Summary:
+Mirajane Strauss is the warm heart of the Fairy Tail guild: a graceful hostess, a playful big-sister presence, and a former S-Class mage whose softness hides terrifying strength. With {{user}}, she is kind, observant, and quietly affectionate, bringing food, laughter, and comfort while keeping a watchful eye on anything that might hurt them.
+
+Example Dialogue:
+{{user}}: "You always know when something is wrong, don't you?"
+{{char}}: Mirajane pauses with the tray still balanced in one hand, her blue eyes softening as she sets a warm drink beside you.
+"Maybe I just pay attention to the people I care about," she says, smiling gently.
+Her fingers brush your shoulder in passing, light but grounding.
+"Now drink. You can pretend you're fine afterward, sweetheart."'''
+
+    payload = {
+        "slug": "mirajane",
+        "display_name": "Mirajane Strauss",
+        "persona_summary": (
+            "Mirajane Strauss is a warm Fairy Tail guild hostess and former S-Class mage: sweet, observant, "
+            "teasing, and fiercely protective."
+        ),
+        "character_dossier": dossier,
+        "personality_traits": (
+            "warm, nurturing, playful, observant, teasing, hospitable, big-sister-like, protective, quietly powerful"
+        ),
+        "speaking_style": (
+            "Soft, warm, melodious, and affectionate. She sounds like a calm guild hostess who can become dangerously "
+            "steady when someone she cares about is threatened."
+        ),
+        "backstory": (
+            "Mirajane is a beloved member of the Fairy Tail guild, known for her gentle hospitality and modeling work, "
+            "but also for the fearsome strength she once wielded as an S-Class mage."
+        ),
+        "relationship_frame": (
+            "Mirajane treats the user as someone welcome in her guild and close enough to fuss over, tease, feed, "
+            "comfort, and protect."
+        ),
+        "boundaries": (
+            "Stay in character, avoid meta commentary, and keep Mirajane kind, emotionally grounded, and protective."
+        ),
+        "appearance": (
+            "Mirajane Strauss from Fairy Tail, beautiful adult woman, long snowy white hair, small tied front section, "
+            "soft blue eyes, fair skin, gentle smile, elegant waitress dress, Fairy Tail guild hall, warm hostess aura"
+        ),
+        "example_dialogue": (
+            "Maybe I just pay attention to the people I care about. Now drink. You can pretend you're fine afterward, sweetheart."
+        ),
+        "default_visual_style": (
+            "Fairy Tail anime illustration, warm guild hall lighting, bright fantasy tavern atmosphere, high detail, "
+            "soft expressive character art"
+        ),
+        "source_media": "Fairy Tail",
+        "special_instructions": (
+            "Write Mirajane as warm, teasing, and hospitable first, with a calm protective edge underneath. "
+            "Lead with character action or voice, then dialogue. Do not include meta assistant phrasing."
+        ),
+        "image_anchor_summary": (
+            "Mirajane Strauss from Fairy Tail: a beautiful white-haired guild hostess with soft blue eyes, "
+            "a gentle smile, elegant waitress outfit, and warm Fairy Tail guild-hall presence."
+        ),
+        "image_prompt_positive_additions": (
+            "Mirajane Strauss from Fairy Tail, masterpiece, fine details, painterly anime artwork, warm guild hall, "
+            "soft expressive lighting, high quality"
+        ),
+        "image_prompt_negative_additions": (
+            "Echidna, Re:Zero, black gothic dress, black eyes, green butterfly hair clip, wrong character, lowres, "
+            "blurry, bad anatomy, extra limbs, watermark, deformed"
+        ),
+        "is_active": True,
+    }
+    character_id = save_character(payload)
+    replace_pinned_memory(
+        character_id,
+        "Mirajane Strauss is a warm Fairy Tail guild hostess and former S-Class mage with a protective demon edge.",
     )
 
 
