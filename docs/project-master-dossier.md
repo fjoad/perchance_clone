@@ -1,9 +1,50 @@
 # Project Master Dossier
 
 Status: canonical project context file
-Last updated: April 1, 2026
+Last updated: May 27, 2026
 Location: `docs/project-master-dossier.md`
 Derivative export status: no PDF generated because no local PDF converter was found in the current environment without adding dependencies
+
+## May 23, 2026 Target Refresh
+
+The current product target has sharpened from a broad "AI companion app" into a local illustrated visual novel/storybook engine.
+
+Read these first for current work:
+
+- `docs/current-implementation-status-2026-05-28.md`: latest safe runtime baseline, guarded evidence, and immediate productization status
+- `docs/local-vn-engine-target.md`: current product target, latency bar, quality bar, and evaluation standard
+- `docs/local-vn-engine-research-2026-05.md`: current local model/backend research and experiment order
+- `docs/local-vn-engine-deep-dive-2026-05-23.md`: broader current-space research across offline/cloud, text models, image models, runtimes, and backend strategy
+
+The older companion-app framing below remains useful historical context, but the local VN engine target is now the active direction.
+
+## May 27, 2026 Runtime Decision
+
+The current app path has moved from experiments into implementation.
+
+Proven local production loop:
+
+- Text backend: `hf.co/dphn/Dolphin-X1-8B-GGUF:Q5_K_M` through Ollama `0.21.0`
+- Text context: `8192`
+- Image backend: A1111 API, not in-process Diffusers
+- Image checkpoint: `novaAnimeXL_ilV120.safetensors`
+- Default image preset: `640x640 -> 1280x1280`, `20` base steps, `10` hires steps, `DPM++ 2M`, `Automatic`, `Latent`, denoise `0.7`
+- Runtime policy: keep A1111 hot, generate story text, make a small second text call for the image prompt, unload Ollama text, render image through A1111, then optionally preload text again
+- Storage policy: all model/cache/temp paths must stay on `F:`
+
+The full Echidna gold replay completed in `outputs/diags/gold_production_a1111_20260527_221206`.
+
+Observed average over 7 full gold turns:
+
+- first token: `6.53s`
+- story generation: `9.12s`
+- image prompt call: `3.63s`
+- text unload: `4.09s`
+- A1111 image render: `24.75s`
+- total turn: `43.88s`
+- text split: `6.04 GiB VRAM / 0.00 GiB CPU`
+
+The actual FastAPI app now uses the A1111-backed image service. A full route-level smoke test succeeded with real text and real image generation on a temporary DB/output folder, then cleaned up all A1111/Ollama child processes and returned the GPU to idle.
 
 ## 1. Purpose and How to Use This File
 
@@ -496,12 +537,66 @@ This appendix preserves the important historical context from earlier long summa
   - matching image generation
 - `[current recommendation]` Avoid restarting the old pattern of endlessly optimizing internals before a real user-facing loop exists.
 
+## 10. Current Productization State
+
+- `[repo-observed]` The app now uses the A1111-backed image service and Ollama text service as the practical v1 runtime direction.
+- `[repo-observed]` The real app image prompt composer now anchors visual identity with:
+  - character display name
+  - source media when present, e.g. `Echidna from Re:Zero`
+  - filtered active-character visual card
+  - scene summary
+  - style and positive/negative additions
+- `[repo-observed]` Multi-character visual cards from Perchance-style exports are filtered before image prompting. Example: if a field contains both `Echidna:` and `Mirajane:`, only the active character block is used for Echidna.
+- `[repo-observed]` The chat composer now has an opt-in `Generate image after reply` control. This supports the production loop without forcing every text reply to become a long image-rendering request.
+- `[repo-observed]` The lightweight smoke script `scripts/smoke_app_identity_prompt.py` verifies both:
+  - manual image generation from an assistant message
+  - chat submission with auto-image enabled
+- `[repo-observed]` The smoke test is intentionally mock-only and should not start A1111 or Ollama.
+- `[repo-observed]` Diagnostic smoke scripts now copy run-id-named image/settings files in addition to short aliases like `image.png`, so experiment images are identifiable even outside their folder.
+- `[repo-observed]` `scripts/import_gold_sample_character.py` imports research gold samples into the app database as usable characters. Echidna has been imported from `outputs/research_gold_samples/echidna` with source media `Re:Zero` and the gold turn history.
+- `[repo-observed]` `scripts/stop_companion_backends.ps1` is the preferred recovery/cleanup command for stopping Ollama, A1111, and benchmark backends without touching unrelated Jupyter kernels unless `-IncludeJupyter` is explicitly passed.
+- `[repo-observed]` `scripts/audit_storage_paths.py` verifies HuggingFace, Torch, CUDA, temporary, SQLite temporary, and Ollama model paths are on `F:` and checks that risky `C:` cache folders are absent.
+- `[repo-observed]` The UI status stream now exposes clearer text/image phases: story reply generation, image prompt composition, text-model handoff, and A1111 rendering.
+- `[repo-observed]` Speed-mode auto-image now uses a deterministic image prompt path instead of a second LLM call. It anchors character identity/source media, filters the assistant reply into visual fragments, merges existing style/negative additions, and records `image_prompt_strategy: deterministic_speed` in the story-frame metadata.
+- `[repo-observed]` Latest browser-driven real replay after deterministic Speed prompt integration: `outputs/diags/browser_prompt_replay_20260601_013907`.
+- `[repo-observed]` That replay covered `sample-companion`, `atago`, `ahri`, `echidna`, and `mirajane` through the actual browser UI with auto-image enabled. Average text-visible time was ~22.3s, average image-visible time was ~55.4s, and average post-text image wait was ~33.1s.
+- `[repo-observed]` Previous browser baseline with the LLM image-prompt composer had average image-visible time ~68.3s and average post-text image wait ~48.1s, so deterministic Speed saved about ~15.0s after text became visible without changing the `512 -> 1024` A1111 preset.
+- `[repo-observed]` Latest browser-driven real replay after startup readiness gating: `outputs/diags/browser_prompt_replay_20260601_201202`.
+- `[repo-observed]` That replay pre-warmed text and image backends before accepting chat input, then replayed `sample-companion`, `atago`, `ahri`, `echidna`, and `mirajane` through the browser with auto-image enabled. Average text-visible time was ~18.6s, average image-visible time was ~55.7s, and average post-text image wait was ~37.1s.
+- `[repo-observed]` The readiness-gated run improved first-use cold-start behavior substantially: the warmup image-visible path was ~60.4s versus ~127.6s in the previous deterministic Speed replay.
+- `[repo-observed]` The app now exposes a Runtime diagnostics drawer backed by `/diagnostics`, plus a startup readiness panel that disables chat submission until configured preload work is complete. Browser probe evidence: `outputs/diags/diagnostics_drawer_probe_20260601_202901`.
+- `[repo-observed]` `/status` and `/diagnostics` now avoid repeatedly probing Ollama on every UI heartbeat by caching the text-model loaded check briefly. Mock timing probe after the fix: `/status` ~0.01s and `/diagnostics` ~0.09s.
+
+### Safety Rule After BSOD
+
+- `[repo-observed]` A full real-backend FastAPI/TestClient image smoke caused a Windows `MEMORY_MANAGEMENT` BSOD on 2026-05-28.
+- `[repo-observed]` The route has since been recovered under `scripts/run_real_app_route_image_guarded.ps1`, which watches free system RAM, Windows commit ratio, and VRAM and kills companion backends if thresholds are exceeded.
+- `[repo-observed]` The app now defaults to a hard text-to-image handoff: after text/image-prompt composition, Ollama is unloaded and stopped before A1111 renders. This is controlled by `COMPANION_STOP_OLLAMA_BEFORE_IMAGE` and defaults to enabled.
+- `[repo-observed]` Latest passing real route smoke: `outputs/diags/real_app_route_smoke_20260528_021142`.
+- `[repo-observed]` Latest passing route used 704 -> 1408 A1111 settings, rendered in ~20.3s, peaked around 11862 MiB VRAM, kept at least 13.34 GB system RAM free, and ended with idle memory restored.
+- `[repo-observed]` Latest passing full chat + auto-image sequence at the balanced preset after in-app resource guard integration: `outputs/diags/real_app_chat_auto_sequence_20260528_052242`.
+- `[repo-observed]` The latest 640 -> 1280 sequence completed turn 1 in ~77.7s and turn 2 in ~56.0s, with A1111 renders at ~15.7s and ~15.6s. External watchdog peak was ~12034 MiB VRAM, lowest free RAM was ~13.67 GiB, and final cleanup returned VRAM to about 240 MiB used.
+- `[repo-observed]` Latest passing speed-mode sequence after in-app resource guard integration: `outputs/diags/real_app_chat_auto_sequence_20260528_051941`.
+- `[repo-observed]` The latest 512 -> 1024 sequence completed turn 1 in ~90.1s and turn 2 in ~50.5s, with A1111 renders at ~24.6s and ~10.3s. External watchdog peak was ~11962 MiB VRAM, lowest free RAM was ~12.53 GiB, and final cleanup returned VRAM to about 230 MiB used.
+- `[repo-observed]` Both latest sequences generated image prompts containing `Echidna from Re:Zero`, did not include `Mirajane`, and kept scene narrative out of the negative prompt.
+- `[repo-observed]` Latest single-turn real chat + auto-image check after prompt cleanup: `outputs/diags/real_app_chat_auto_smoke_20260528_053121`.
+- `[repo-observed]` That run completed in ~77.8s total with a ~15.6s A1111 render, peaked around 12032 MiB VRAM, kept at least 15.69 GiB free system RAM, and produced a cleaner visual-only image prompt with run-id-named artifacts.
+- `[repo-observed]` Latest non-blocking auto-image route check: `outputs/diags/real_app_chat_auto_smoke_20260528_054343`.
+- `[repo-observed]` That run returned the assistant text route in ~22.0s while the background image completed at ~79.0s, with a ~15.7s A1111 render. Peak VRAM was ~12030 MiB and lowest free RAM was ~14.85 GiB.
+- `[current recommendation]` Keep the non-blocking auto-image behavior. It better matches the target user experience because text appears first and the image arrives afterward.
+- `[current recommendation]` Use 640 -> 1280 as the balanced app default. Keep 512 -> 1024 as speed mode and 704 -> 1408+ as quality modes.
+- `[current recommendation]` Do not run full real-backend TestClient checks without the guarded runner.
+- `[current recommendation]` Real-backend checks should use the safe runner scripts or manual app launch with one clear backend lifecycle, explicit process cleanup, and resource checks before/after.
+- `[current recommendation]` Keep using mock route tests for app wiring and reserve real A1111/Ollama runs for benchmark harnesses that already pre-clean and final-clean processes.
+- `[current recommendation]` Before any heavy run, use:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop_companion_backends.ps1`
+
 ## Quick Reference
 
 If a future session needs the shortest possible summary, it is this:
 
 - `[current recommendation]` The project goal is a local-first `Candy.ai`-style companion app.
-- `[current recommendation]` The current repo is valuable reference material, not the final codebase.
+- `[current recommendation]` The current repo is valuable reference material and is now also the active prototype path for the proven A1111/Ollama loop.
 - `[current recommendation]` Modern companion apps appear to rely on layered memory, hidden prompt assembly, and image identity anchoring.
 - `[current recommendation]` Our minimum viable architecture is:
   - structured character card
