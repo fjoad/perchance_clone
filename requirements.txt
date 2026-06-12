@@ -1,0 +1,16 @@
+# Core runtime dependencies for the Companion V1 web app.
+# The heavy model backends are external local services and are NOT pip deps:
+#   - Text: Ollama (standalone install, see README)
+#   - Images: AUTOMATIC1111 stable-diffusion-webui (own venv, see README)
+#
+# Exact working snapshot of the full conda env (companion_v1) is in
+# requirements-freeze.txt for faithful environment reconstruction.
+
+fastapi==0.135.2
+uvicorn==0.42.0
+jinja2==3.1.6
+python-multipart==0.0.22
+pillow==11.0.0
+
+# Optional - only needed for the browser-level test harnesses in scripts/
+# playwright==1.60.0

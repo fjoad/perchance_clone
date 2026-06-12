@@ -36,6 +36,9 @@ tags_build/
 Thumbs.db
 .DS_Store
 
+# Per-machine assistant/tool settings (never version local permission grants)
+.claude/settings.local.json
+
 # Keep repo docs tracked explicitly
 !docs/
 !docs/*.md
