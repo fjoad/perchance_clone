@@ -59,6 +59,15 @@
                 <button class="ghost-button compact" type="button" onclick="window.toggleDiagnosticsDrawer()">
                     Runtime
                 </button>
+                <button
+                    class="ghost-button compact power-button"
+                    id="power-button"
+                    type="button"
+                    title="Unload all models, free memory, and stop the app server"
+                    onclick="window.requestShutdown()"
+                >
+                    Power Off
+                </button>
             </div>
         </section>
 

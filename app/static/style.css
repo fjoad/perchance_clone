@@ -1453,3 +1453,45 @@ select:focus {
 .readiness-retry[hidden] {
     display: none;
 }
+
+/* --- Power off ---------------------------------------------------------- */
+
+.power-button[data-armed="1"] {
+    border-color: rgba(224, 140, 140, 0.55);
+    color: #e08c8c;
+}
+
+#shutdown-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 7, 10, 0.94);
+    backdrop-filter: blur(6px);
+}
+
+#shutdown-screen .shutdown-card {
+    max-width: 480px;
+    padding: 34px 38px;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    background: rgba(12, 15, 22, 0.9);
+}
+
+#shutdown-screen h2 {
+    margin: 8px 0 12px;
+    color: var(--ink-strong, #f2ead9);
+    font-family: var(--display, serif);
+}
+
+#shutdown-screen p {
+    color: var(--muted, #9aa6c5);
+    line-height: 1.55;
+}
+
+#shutdown-screen[data-final="1"] h2 {
+    color: #95dda4;
+}

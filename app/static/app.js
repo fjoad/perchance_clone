@@ -550,7 +550,9 @@ function connectStatusStream() {
 
     stream.onerror = () => {
         stream.close();
-        window.setTimeout(connectStatusStream, 2000);
+        if (!window.__shutdownMode) {
+            window.setTimeout(connectStatusStream, 2000);
+        }
     };
 }
 
@@ -778,6 +780,101 @@ function retryWarmup() {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Power off: unload models, stop engines, close the server - from the UI
+// ---------------------------------------------------------------------------
+
+function showShutdownScreen(message, final) {
+    let screen = document.getElementById("shutdown-screen");
+    if (!screen) {
+        screen = document.createElement("div");
+        screen.id = "shutdown-screen";
+        screen.innerHTML =
+            '<div class="shutdown-card">' +
+            '<p class="eyebrow">Companion</p>' +
+            '<h2 id="shutdown-title">Shutting down</h2>' +
+            '<p id="shutdown-detail"></p>' +
+            "</div>";
+        document.body.appendChild(screen);
+    }
+    const title = document.getElementById("shutdown-title");
+    const detail = document.getElementById("shutdown-detail");
+    if (final) {
+        if (title) {
+            title.textContent = "App is off";
+        }
+        screen.dataset.final = "1";
+    }
+    if (detail) {
+        detail.textContent = message;
+    }
+}
+
+async function performShutdown() {
+    window.__shutdownMode = true;
+    if (window.__statusStream) {
+        window.__statusStream.close();
+    }
+    if (window.__autoImageRefreshTimer) {
+        window.clearInterval(window.__autoImageRefreshTimer);
+    }
+    showShutdownScreen("Asking the server to unload models and stop the local engines...");
+    try {
+        await fetch("/runtime/shutdown", { method: "POST" });
+    } catch (_) {
+        showShutdownScreen("Could not reach the server - it may already be off. You can close this tab.", true);
+        return;
+    }
+    // Narrate unload phases until the server stops answering.
+    const startedAt = Date.now();
+    const poll = async () => {
+        try {
+            const response = await fetch("/status", { cache: "no-store" });
+            const data = await response.json();
+            const text = data.text || {};
+            const image = data.image || {};
+            const busy = [text, image].find((s) => s.state && s.state !== "idle" && s.state !== "ready");
+            const phase = busy ? busy.detail : "Stopping the app server...";
+            showShutdownScreen(phase || "Stopping the app server...");
+        } catch (_) {
+            showShutdownScreen(
+                "All models unloaded and local engines stopped. The server is off - you can close this tab. " +
+                "Double-click START_COMPANION_APP.cmd to start it again.",
+                true
+            );
+            return;
+        }
+        if (Date.now() - startedAt < 180000) {
+            window.setTimeout(poll, 1200);
+        } else {
+            showShutdownScreen("Shutdown is taking unusually long; check the server terminal.", true);
+        }
+    };
+    window.setTimeout(poll, 1200);
+}
+
+function requestShutdown() {
+    const button = document.getElementById("power-button");
+    if (!button) {
+        return;
+    }
+    if (button.dataset.armed === "1") {
+        button.dataset.armed = "0";
+        button.textContent = "Power Off";
+        performShutdown();
+        return;
+    }
+    const draft = document.querySelector(".composer textarea");
+    button.dataset.armed = "1";
+    button.textContent = draft && draft.value.trim() ? "Confirm? (unsent draft!)" : "Confirm Power Off?";
+    window.setTimeout(() => {
+        if (button.dataset.armed === "1") {
+            button.dataset.armed = "0";
+            button.textContent = "Power Off";
+        }
+    }, 6000);
+}
+
 window.closeModal = closeModal;
 window.toggleInlineComposer = toggleInlineComposer;
 window.addLoreEntryRow = addLoreEntryRow;
@@ -785,6 +882,7 @@ window.removeLoreEntryRow = removeLoreEntryRow;
 window.toggleDiagnosticsDrawer = toggleDiagnosticsDrawer;
 window.refreshDiagnostics = refreshDiagnostics;
 window.retryWarmup = retryWarmup;
+window.requestShutdown = requestShutdown;
 
 document.addEventListener("DOMContentLoaded", () => {
     attachTimelineImageLoadScroll();

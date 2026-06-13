@@ -222,6 +222,7 @@ Seeding is additive and non-destructive. It does not delete existing imported/te
 - Auto-image toggle and image preset persist across turns and restarts.
 - Cache-busted static assets, so UI updates always reach the browser.
 - Runtime diagnostics drawer with recent event log.
+- Power Off button in the header: unloads all models, stops Ollama and A1111 (including orphaned runners), frees VRAM/RAM, then closes the app server - with live phase narration and a final "safe to close this tab" screen.
 - Text-first, background-image flow.
 - Speed/Balanced/Detail image preset picker.
 - Story frames for each assistant turn.

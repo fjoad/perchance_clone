@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
 import re
+import signal
 import threading
 import time
 from collections import defaultdict
@@ -1681,6 +1683,51 @@ async def send_message_stream(
 async def retry_warmup_route() -> dict[str, Any]:
     runtime_coordinator.retry_warmup()
     return {"ok": True}
+
+
+@app.post("/runtime/shutdown")
+async def shutdown_app_route() -> dict[str, Any]:
+    """Full power-off: unload models, stop Ollama and A1111, then exit the server.
+
+    Responds immediately; the work happens in a background thread so the UI
+    can watch the unload phases through /status until the server goes away.
+    If a generation is mid-flight, the runtime lock makes shutdown wait for
+    it to finish rather than corrupting state.
+    """
+    log_event("user_shutdown_requested")
+
+    def _shutdown_worker() -> None:
+        try:
+            runtime_coordinator.shutdown()
+        except Exception as exc:  # pragma: no cover - shutdown safety path
+            log_event("user_shutdown_error", error=repr(exc))
+        try:
+            # Power-off means the whole companion stack, including backends
+            # this process did not start itself.
+            image_service._stop_orphaned_a1111_children()  # noqa: SLF001
+        except Exception:
+            pass
+        try:
+            # Second sweep: an Ollama runner can outlive the first sweep if it
+            # was still winding down when its parent server was killed.
+            time.sleep(2)
+            text_service._stop_orphaned_ollama_runners()  # noqa: SLF001
+        except Exception:
+            pass
+        log_event("user_shutdown_backends_done")
+        time.sleep(0.7)
+        try:
+            signal.raise_signal(signal.SIGINT)
+        except Exception:
+            os._exit(0)
+        time.sleep(8)
+        os._exit(0)
+
+    threading.Thread(target=_shutdown_worker, name="companion-shutdown", daemon=True).start()
+    return {
+        "ok": True,
+        "detail": "Unloading models and stopping local engines; the server will close itself.",
+    }
 
 
 @app.post("/messages/{message_id}/image", response_class=HTMLResponse)
